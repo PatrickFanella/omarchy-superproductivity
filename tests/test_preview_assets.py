@@ -31,6 +31,12 @@ class PreviewAssetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-demo ID"):
             PREVIEW.scan_final_text('taskId="real-task-123"', Path("preview.png"), "test")
 
+    def test_live_readme_capture_is_safe_and_cropped(self) -> None:
+        live = ROOT / "assets" / "screenshots" / "live-panel.png"
+        PREVIEW.verify_final_asset(live)
+        dimensions = PREVIEW.run(["magick", "identify", "-format", "%Wx%H", str(live)])
+        self.assertEqual(dimensions, "844x1305")
+
 
 if __name__ == "__main__":
     unittest.main()

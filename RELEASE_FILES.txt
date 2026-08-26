@@ -20,6 +20,7 @@ assets/preview-src/frame-05.svg
 assets/preview-src/frame-06.svg
 assets/preview-src/frame-07.svg
 assets/preview-src/frame-08.svg
+assets/screenshots/live-panel.png
 assets/screenshots/panel-reduced-motion.png
 assets/screenshots/panel.png
 assets/timer-complete.wav

@@ -18,11 +18,13 @@ Show and control the current [Super Productivity](https://super-productivity.com
 
 ## Preview
 
-![Super Productivity popup showing a synthetic overtime leaf task, timer controls, the compact Add and switch checkbox, and chronological Today rows](assets/screenshots/panel.png)
+![Super Productivity popup showing the next scheduled task, Quick Add, and chronological Today rows with Start and Complete controls](assets/screenshots/live-panel.png)
+
+The screenshot above is a cropped live capture. The generated preview below demonstrates additional states without using private task data.
 
 ![Animated Super Productivity popup preview showing timer controls, Quick Add with its compact checkbox, chronological Today rows with leaf actions, hierarchy search, Go top, and the next scheduled task while idle](assets/demo.gif)
 
-The previews use synthetic task and project names. The static [reduced-motion preview](assets/screenshots/panel-reduced-motion.png) shows the synthetic idle next-start state.
+The animated preview uses synthetic task and project names. The static [reduced-motion preview](assets/screenshots/panel-reduced-motion.png) shows the synthetic idle next-start state.
 
 ## Requirements
 
