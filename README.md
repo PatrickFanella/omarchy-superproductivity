@@ -204,7 +204,7 @@ Select the top-right gear in the popup to open the **Super Productivity** config
 
 Auto-next scans the next sibling first, then the remaining flattened Today order. It skips unscheduled tasks, tasks with invalid start times, scheduled tasks outside the configured ±window, done tasks, every parent with retained `subTaskIds`, and the completed task. The default window is 30 minutes. It never wraps to the start.
 
-After completion, the helper requires two null-current reads 300 ms apart before it starts the candidate. If Super Productivity starts another task, the plugin keeps that task and skips auto-next. Another client can still change the current task after the second check, so a residual race remains.
+After completion, the helper allows the current task to be null or the completed task's exact captured parent during the 300 ms grace period. It rechecks immediately before its single follow-up POST. An unrelated current task always wins and is never changed. If Super Productivity promotes the exact parent and no eligible auto-next candidate remains, the helper rechecks the parent and sends one untargeted Stop to undo that promotion, even when auto-next is disabled. Because Stop cannot name its target, another client can still switch tasks after the last read but before Stop is applied; this residual race cannot be eliminated by the local API.
 
 ## Mutation results and race limits
 

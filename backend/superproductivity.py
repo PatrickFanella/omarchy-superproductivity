@@ -632,7 +632,7 @@ def status(client: Client) -> dict[str, Any]:
         projects = {}
         warnings.append("projects-unavailable")
     try:
-        tasks_payload = client.request("GET", "/tasks")
+        tasks_payload = client.request("GET", "/tasks?includeDone=true")
         if not isinstance(tasks_payload, list):
             raise BridgeError("malformed")
         tasks_ok = True
@@ -920,6 +920,31 @@ def _auto_next_eligible(task: dict[str, Any], now_ms: int, window_ms: int) -> bo
     )
 
 
+def _effective_auto_next_due(task: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> float | None:
+    due = task.get("dueWithTime")
+    if (not isinstance(due, bool) and isinstance(due, (int, float))
+            and math.isfinite(due) and due > 0):
+        return float(due)
+    parent_id = normalize_parent_id(task.get("parentId"))
+    if parent_id is None:
+        return None
+    parent = by_id.get(parent_id)
+    if parent is None or normalize_parent_id(parent.get("parentId")) is not None:
+        return None
+    parent_due = parent.get("dueWithTime")
+    if (isinstance(parent_due, bool) or not isinstance(parent_due, (int, float))
+            or not math.isfinite(parent_due) or parent_due <= 0):
+        return None
+    return float(parent_due)
+
+
+def _auto_next_task_eligible(task: dict[str, Any], by_id: dict[str, dict[str, Any]],
+                             now_ms: int, window_ms: int) -> bool:
+    due = _effective_auto_next_due(task, by_id)
+    return (due is not None and task.get("isDone") is not True
+            and not task.get("subTaskIds") and abs(due - now_ms) <= window_ms)
+
+
 def _runnable_ids(flattened: list[dict[str, Any]]) -> list[str]:
     return [
         task["id"] for task in flattened
@@ -946,7 +971,7 @@ def _auto_next_candidate(
         if target_id in siblings:
             for sibling_id in siblings[siblings.index(target_id) + 1:]:
                 sibling = by_id.get(sibling_id)
-                if sibling is not None and _auto_next_eligible(sibling, now_ms, window_ms):
+                if sibling is not None and _auto_next_task_eligible(sibling, by_id, now_ms, window_ms):
                     return sibling_id
         anchor_id = target["parentId"]
     else:
@@ -957,7 +982,7 @@ def _auto_next_candidate(
         anchor_position = max([anchor_position] + owned)
     return next((
         task["id"] for task in flattened[anchor_position + 1:]
-        if _auto_next_eligible(task, now_ms, window_ms)
+        if _auto_next_task_eligible(task, by_id, now_ms, window_ms)
     ), None)
 
 
@@ -965,6 +990,144 @@ def validate_auto_next_window(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 1440:
         raise BridgeError("Auto-next window must be an integer from 1 to 1440 minutes")
     return value
+
+
+def _completion_result(task_id: str, state: str, stage: str, final_id: str | None,
+                       followup_applied: bool | None, message: str, auto_next: str,
+                       candidate: str | None = None, race: bool = False) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "expectedCurrentId": task_id, "observedCurrentId": task_id,
+        "finalCurrentId": final_id, "followupMutationApplied": followup_applied,
+        "message": message, "autoNext": auto_next, "raceDetected": race,
+    }
+    if candidate is not None:
+        values["nextTaskId"] = candidate
+    return mutation_result("complete", task_id, state, stage, True, **values)
+
+
+def _completion_current_result(task_id: str, current_id: str | None,
+                               parent_id: str | None, candidate: str | None) -> dict[str, Any] | None:
+    if current_id == task_id:
+        return _completion_result(task_id, "partial", "followup-preflight", current_id, False,
+                                  "Completed task remains current", "current-not-cleared", candidate, True)
+    if current_id is not None and current_id != parent_id:
+        return _completion_result(task_id, "succeeded", "done", current_id, False,
+                                  "Task completed", "skipped-upstream-current", candidate)
+    return None
+
+
+def _read_reconciliation_current(client: Client, task_id: str, parent_id: str | None,
+                                 candidate: str | None) -> tuple[str | None, dict[str, Any] | None]:
+    current = _current_id(client.request("GET", "/task-control/current"))
+    return current, _completion_current_result(task_id, current, parent_id, candidate)
+
+
+def _reconcile_completion(client: Client, task_id: str, parent_id: str | None,
+                          candidate: str | None, auto_next: bool, window_ms: int) -> dict[str, Any]:
+    candidate_ineligible = False
+    try:
+        current, resolved = _read_reconciliation_current(client, task_id, parent_id, candidate)
+    except BridgeError as error:
+        return _completion_result(task_id, "partial", "followup-preflight", None, False,
+                                  str(error), "current-unknown", candidate)
+    if resolved is not None:
+        return resolved
+
+    time.sleep(AUTO_NEXT_GRACE)
+    try:
+        current, resolved = _read_reconciliation_current(client, task_id, parent_id, candidate)
+    except BridgeError as error:
+        return _completion_result(task_id, "partial", "followup-preflight", None, False,
+                                  str(error), "current-unknown", candidate)
+    if resolved is not None:
+        return resolved
+
+    if auto_next and candidate is not None:
+        fresh = None
+        try:
+            fresh = normalize_task_strict(client.request("GET", _task_path(candidate)))
+        except RequestRejected:
+            candidate_ineligible = True
+        except BridgeError as error:
+            return _completion_result(task_id, "partial", "followup-preflight", current, False,
+                                      str(error), "candidate-unknown", candidate)
+        else:
+            candidate_by_id = {candidate: fresh}
+            candidate_parent_id = normalize_parent_id(fresh.get("parentId"))
+            if candidate_parent_id is not None and not _effective_auto_next_due(fresh, candidate_by_id):
+                try:
+                    candidate_parent = normalize_task_strict(
+                        client.request("GET", _task_path(candidate_parent_id))
+                    )
+                except BridgeError as error:
+                    return _completion_result(task_id, "partial", "followup-preflight", current, False,
+                                              str(error), "candidate-unknown", candidate)
+                candidate_by_id[candidate_parent_id] = candidate_parent
+            candidate_ineligible = fresh["id"] != candidate or not _auto_next_task_eligible(
+                fresh, candidate_by_id, time.time_ns() // 1_000_000, window_ms
+            )
+        if not candidate_ineligible and fresh is not None and fresh["id"] == candidate:
+            try:
+                current, resolved = _read_reconciliation_current(client, task_id, parent_id, candidate)
+            except BridgeError as error:
+                return _completion_result(task_id, "partial", "followup-preflight", None, False,
+                                          str(error), "current-unknown", candidate)
+            if resolved is not None:
+                return resolved
+            try:
+                _, rejection = _request_mutation(client, "POST", "/task-control/current", {"taskId": candidate})
+            except DispatchUnknown as error:
+                return _completion_result(task_id, "unknown", "followup-dispatch", current, None,
+                                          str(error), "unknown", candidate)
+            if rejection:
+                return _completion_result(task_id, "partial", "followup-dispatch", current, False,
+                                          rejection, "failed", candidate)
+            try:
+                final = _current_id(client.request("GET", "/task-control/current"))
+            except BridgeError as error:
+                return _completion_result(task_id, "unknown", "followup-verify", None, None,
+                                          str(error), "unknown", candidate)
+            if final != candidate:
+                return _completion_result(task_id, "partial", "followup-verify", final, True,
+                                          "Auto-next postcondition did not hold", "mismatch", candidate, True)
+            return _completion_result(task_id, "succeeded", "done", final, True,
+                                      "Task completed and next task started", "started", candidate)
+
+    label = "skipped-candidate" if candidate_ineligible else ("no-candidate" if auto_next else "disabled")
+    if current is None:
+        return _completion_result(task_id, "succeeded", "done", None, False,
+                                  "Task completed", label, candidate)
+
+    # Only the exact parent captured before PATCH can reach this correction path.
+    try:
+        current, resolved = _read_reconciliation_current(client, task_id, parent_id, candidate)
+    except BridgeError as error:
+        return _completion_result(task_id, "partial", "followup-preflight", None, False,
+                                  str(error), "current-unknown", candidate)
+    if resolved is not None:
+        return resolved
+    if current is None:
+        return _completion_result(task_id, "succeeded", "done", None, False,
+                                  "Task completed", label, candidate)
+    try:
+        _, rejection = _request_mutation(client, "POST", "/task-control/stop")
+    except DispatchUnknown as error:
+        return _completion_result(task_id, "unknown", "followup-dispatch", current, None,
+                                  str(error), "parent-correction-unknown", candidate)
+    if rejection:
+        return _completion_result(task_id, "partial", "followup-dispatch", current, False,
+                                  rejection, "parent-correction-failed", candidate)
+    try:
+        final = _current_id(client.request("GET", "/task-control/current"))
+    except BridgeError as error:
+        return _completion_result(task_id, "unknown", "followup-verify", None, None,
+                                  str(error), "parent-correction-unknown", candidate)
+    if final is not None:
+        return _completion_result(task_id, "partial", "followup-verify", final, True,
+                                  "Parent correction postcondition did not hold",
+                                  "parent-correction-mismatch", candidate, True)
+    return _completion_result(task_id, "succeeded", "done", None, True,
+                              "Task completed and promoted parent stopped", "parent-corrected", candidate)
 
 
 @structured_mutator("complete-list")
@@ -1092,7 +1255,7 @@ def complete(
             try:
                 selection_now_ms = time.time_ns() // 1_000_000
                 today = client.request("GET", "/tasks?tagId=TODAY")
-                bulk = client.request("GET", "/tasks")
+                bulk = client.request("GET", "/tasks?includeDone=true")
                 if not isinstance(today, list) or not isinstance(bulk, list):
                     raise BridgeError("Super Productivity returned a malformed task list")
                 hierarchy_payload, hidden_child_ids = _hydrate_today_children(today, bulk)
@@ -1130,61 +1293,9 @@ def complete(
             return mutation_result("complete", task_id, "unknown", "verify", True, expectedCurrentId=task_id, observedCurrentId=observed, message=str(error), autoNext="not-run")
         if verified["id"] != task_id or not verified["isDone"]:
             return mutation_result("complete", task_id, "partial", "verify", True, expectedCurrentId=task_id, observedCurrentId=observed, raceDetected=True, message="Completion postcondition did not hold", autoNext="not-run")
-        if not auto_next:
-            try:
-                final = _current_id(client.request("GET", "/task-control/current"))
-            except BridgeError as error:
-                return mutation_result("complete", task_id, "partial", "verify", True, expectedCurrentId=task_id, observedCurrentId=observed, message=str(error), autoNext="disabled")
-            if final == task_id:
-                return mutation_result("complete", task_id, "partial", "verify", True, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=final, raceDetected=True, message="Completed task remains current", autoNext="disabled")
-            return mutation_result("complete", task_id, "succeeded", "done", True, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=final, message="Task completed", autoNext="disabled")
-        try:
-            first_current = _current_id(client.request("GET", "/task-control/current"))
-        except BridgeError as error:
-            return mutation_result("complete", task_id, "partial", "followup-preflight", True, expectedCurrentId=task_id, observedCurrentId=observed, followupMutationApplied=False, message=str(error), autoNext="current-unknown")
-        if first_current == task_id:
-            return mutation_result("complete", task_id, "partial", "followup-preflight", True, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=first_current, followupMutationApplied=False, raceDetected=True, message="Completed task remains current", autoNext="current-not-cleared", nextTaskId=candidate)
-        if first_current is not None:
-            return mutation_result("complete", task_id, "succeeded", "done", True, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=first_current, followupMutationApplied=False, message="Task completed", autoNext="skipped-upstream-current", nextTaskId=candidate)
-        time.sleep(AUTO_NEXT_GRACE)
-        try:
-            second_current = _current_id(client.request("GET", "/task-control/current"))
-        except BridgeError as error:
-            return mutation_result("complete", task_id, "partial", "followup-preflight", True, expectedCurrentId=task_id, observedCurrentId=observed, followupMutationApplied=False, message=str(error), autoNext="current-unknown", nextTaskId=candidate)
-        if second_current == task_id:
-            return mutation_result("complete", task_id, "partial", "followup-preflight", True, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=second_current, followupMutationApplied=False, raceDetected=True, message="Completed task remains current", autoNext="current-not-cleared", nextTaskId=candidate)
-        if second_current is not None:
-            return mutation_result("complete", task_id, "succeeded", "done", True, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=second_current, followupMutationApplied=False, message="Task completed", autoNext="skipped-upstream-current", nextTaskId=candidate)
-        if candidate is None:
-            return mutation_result("complete", task_id, "succeeded", "done", True, expectedCurrentId=task_id, observedCurrentId=observed, followupMutationApplied=False, message="Task completed", autoNext="no-candidate")
-        try:
-            fresh_candidate = normalize_task_strict(client.request("GET", _task_path(candidate)))
-        except BridgeError as error:
-            return mutation_result("complete", task_id, "partial", "followup-preflight", True, expectedCurrentId=task_id, observedCurrentId=observed, followupMutationApplied=False, message=str(error), autoNext="candidate-stale", nextTaskId=candidate)
-        revalidation_now_ms = time.time_ns() // 1_000_000
-        if fresh_candidate["id"] != candidate or not _auto_next_eligible(
-            fresh_candidate, revalidation_now_ms, window_ms
-        ):
-            return mutation_result("complete", task_id, "succeeded", "done", True, expectedCurrentId=task_id, observedCurrentId=observed, followupMutationApplied=False, message="Task completed; auto-next candidate is no longer eligible", autoNext="skipped-candidate", nextTaskId=candidate)
-        try:
-            third_current = _current_id(client.request("GET", "/task-control/current"))
-        except BridgeError as error:
-            return mutation_result("complete", task_id, "partial", "followup-preflight", True, expectedCurrentId=task_id, observedCurrentId=observed, followupMutationApplied=False, message=str(error), autoNext="current-unknown", nextTaskId=candidate)
-        if third_current is not None:
-            return mutation_result("complete", task_id, "succeeded", "done", True, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=third_current, followupMutationApplied=False, message="Task completed", autoNext="skipped-upstream-current", nextTaskId=candidate)
-        try:
-            _, rejection = _request_mutation(client, "POST", "/task-control/current", {"taskId": candidate})
-        except DispatchUnknown as error:
-            return mutation_result("complete", task_id, "unknown", "followup-dispatch", True, expectedCurrentId=task_id, observedCurrentId=observed, followupMutationApplied=None, message=str(error), autoNext="unknown", nextTaskId=candidate)
-        if rejection:
-            return mutation_result("complete", task_id, "partial", "followup-dispatch", True, expectedCurrentId=task_id, observedCurrentId=observed, followupMutationApplied=False, message=rejection, autoNext="failed", nextTaskId=candidate)
-        try:
-            final = _current_id(client.request("GET", "/task-control/current"))
-        except BridgeError as error:
-            return mutation_result("complete", task_id, "unknown", "followup-verify", True, expectedCurrentId=task_id, observedCurrentId=observed, followupMutationApplied=None, message=str(error), autoNext="unknown", nextTaskId=candidate)
-        if final != candidate:
-            return mutation_result("complete", task_id, "partial", "followup-verify", True, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=final, followupMutationApplied=True, raceDetected=True, message="Auto-next postcondition did not hold", autoNext="mismatch", nextTaskId=candidate)
-        return mutation_result("complete", task_id, "succeeded", "done", True, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=final, followupMutationApplied=True, message="Task completed and next task started", autoNext="started", nextTaskId=candidate)
+        return _reconcile_completion(
+            client, task_id, target["parentId"], candidate, auto_next, window_ms
+        )
 
 
 @structured_mutator("extend")

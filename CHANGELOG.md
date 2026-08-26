@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- Hydrated Today and auto-next from done-inclusive task data so retained completed children do not appear missing.
+- Reconciled completion-triggered parent promotion for enabled and disabled auto-next, while preserving unrelated current tasks and bounding correction to one verified follow-up request.
+
 ## [1.0.0] - 2026-08-25
 
 ### Added

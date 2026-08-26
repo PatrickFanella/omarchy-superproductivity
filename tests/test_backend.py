@@ -163,7 +163,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(client.calls, [
             ("GET", "/tasks?tagId=TODAY", None),
             ("GET", "/projects", None),
-            ("GET", "/tasks", None),
+            ("GET", "/tasks?includeDone=true", None),
             ("GET", "/task-control/current", None),
         ])
 
@@ -257,6 +257,19 @@ class BackendTests(unittest.TestCase):
         self.assertIn("missing-child", result["context"]["warnings"])
         self.assertTrue(result["context"]["tasksOk"])
 
+    def test_status_done_retained_child_is_hidden_without_missing_warning(self):
+        parent = {"id": "parent", "title": "Parent", "timeEstimate": 10, "timeSpent": 0,
+                  "subTaskIds": ["done"]}
+        done = {"id": "done", "title": "Done", "timeEstimate": 10, "timeSpent": 10,
+                "parentId": "parent", "isDone": True}
+        client = FakeClient([[parent], [], [done], None])
+
+        result = sp.status(client)
+
+        self.assertEqual([value["id"] for value in result["todayTasks"]], ["parent"])
+        self.assertNotIn("missing-child", result["context"]["warnings"])
+        self.assertIn(("GET", "/tasks?includeDone=true", None), client.calls)
+
     def test_status_keeps_today_and_current_when_bulk_tasks_fail(self):
         parent = {"id": "parent", "title": "Parent", "timeEstimate": 10, "timeSpent": 0, "subTaskIds": ["child"]}
         current = {"id": "current", "title": "Current", "timeEstimate": 10, "timeSpent": 1}
@@ -266,7 +279,7 @@ class BackendTests(unittest.TestCase):
                 return [parent]
             if path == "/projects":
                 return []
-            if path == "/tasks":
+            if path == "/tasks?includeDone=true":
                 raise sp.DispatchUnknown("bulk down")
             return current
         client.request.side_effect = request

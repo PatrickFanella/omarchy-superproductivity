@@ -606,7 +606,7 @@ class PhaseOneBackendTests(unittest.TestCase):
         result = sp.complete(api, "first", True)
 
         self.assertEqual(result["autoNext"], "no-candidate")
-        self.assertEqual(sum(call[:2] == ("GET", "/tasks") for call in api.calls), 1)
+        self.assertEqual(sum(call[:2] == ("GET", "/tasks?includeDone=true") for call in api.calls), 1)
 
     @mock.patch.object(sp.time, "sleep")
     def test_auto_next_excludes_unrelated_bulk_tasks(self, _sleep):
@@ -620,7 +620,7 @@ class PhaseOneBackendTests(unittest.TestCase):
     def test_auto_next_hydration_failure_fails_before_completion(self):
         values = [task("parent", subTaskIds=["first", "second"]), task("first", parentId="parent"), task("second", parentId="parent")]
         api = StatefulAPI(values, current="first", today=["parent", "first"])
-        api.failures[("GET", "/tasks")] = sp.DispatchUnknown("bulk down")
+        api.failures[("GET", "/tasks?includeDone=true")] = sp.DispatchUnknown("bulk down")
 
         result = sp.complete(api, "first", True)
 
@@ -682,7 +682,7 @@ class PhaseOneBackendTests(unittest.TestCase):
     def test_auto_next_malformed_or_mismatched_candidate_never_starts(self, _sleep):
         now = sp.time.time_ns() // 1_000_000
         for candidate_payload, expected in (
-            ({}, ("partial", "followup-preflight", "candidate-stale")),
+            ({}, ("partial", "followup-preflight", "candidate-unknown")),
             (task("different", dueWithTime=now), ("succeeded", "done", "skipped-candidate")),
             (task("next", subTaskIds=["child"], dueWithTime=now), ("succeeded", "done", "skipped-candidate")),
         ):
@@ -700,6 +700,133 @@ class PhaseOneBackendTests(unittest.TestCase):
 
                 self.assertEqual((result["state"], result["stage"], result["autoNext"]), expected)
                 self.assertFalse(any(call[:2] == ("POST", "/task-control/current") for call in api.calls))
+
+    @mock.patch.object(sp.time, "sleep")
+    def test_completion_parent_grace_matrix_and_unrelated_current_wins(self, sleep):
+        now = sp.time.time_ns() // 1_000_000
+        values = [
+            task("parent", subTaskIds=["first", "next"]),
+            task("first", parentId="parent"),
+            task("next", parentId="parent", dueWithTime=now),
+            task("other"),
+        ]
+        for sequence, expected in (
+            (["parent", "parent", "parent"], ("started", "next")),
+            ([None, "parent", "parent"], ("started", "next")),
+            (["parent", None, None], ("started", "next")),
+            (["parent", "other"], ("skipped-upstream-current", "other")),
+        ):
+            with self.subTest(sequence=sequence):
+                api = StatefulAPI(values, current="first")
+                api.upstream_after_complete = "parent"
+                original = api.request
+                post_reads = iter(sequence)
+                current_reads = 0
+
+                def sequenced(method, path, body=None):
+                    nonlocal current_reads
+                    if method == "GET" and path == "/task-control/current":
+                        current_reads += 1
+                        if current_reads > 2:
+                            try:
+                                value = next(post_reads)
+                            except StopIteration:
+                                return original(method, path, body)
+                            api.calls.append((method, path, body))
+                            return None if value is None else dict(api.tasks[value])
+                    return original(method, path, body)
+
+                api.request = sequenced
+                result = sp.complete(api, "first", True)
+                self.assertEqual((result["autoNext"], result["finalCurrentId"]), expected)
+                followups = [call for call in api.calls if call[0] == "POST"]
+                self.assertLessEqual(len(followups), 1)
+        self.assertEqual(sleep.call_count, 4)
+
+    @mock.patch.object(sp.time, "sleep")
+    def test_no_candidate_corrects_exact_parent_enabled_and_disabled(self, _sleep):
+        values = [task("parent", subTaskIds=["first"]), task("first", parentId="parent")]
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                api = StatefulAPI(values, current="first")
+                api.upstream_after_complete = "parent"
+                result = sp.complete(api, "first", enabled)
+                self.assertEqual((result["state"], result["autoNext"], result["finalCurrentId"]),
+                                 ("succeeded", "parent-corrected", None))
+                self.assertEqual(sum(call[:2] == ("POST", "/task-control/stop") for call in api.calls), 1)
+                stop_index = api.calls.index(("POST", "/task-control/stop", None))
+                self.assertEqual(api.calls[stop_index - 1], ("GET", "/task-control/current", None))
+
+    @mock.patch.object(sp.time, "sleep")
+    def test_stale_candidate_corrects_parent_but_candidate_uncertainty_does_not(self, _sleep):
+        now = sp.time.time_ns() // 1_000_000
+        values = [task("parent", subTaskIds=["first", "next"]), task("first", parentId="parent"),
+                  task("next", parentId="parent", dueWithTime=now)]
+        stale = StatefulAPI(values, current="first")
+        stale.upstream_after_complete = "parent"
+        original = stale.request
+
+        def done_candidate(method, path, body=None):
+            if method == "GET" and path == "/tasks/next":
+                stale.tasks["next"]["isDone"] = True
+            return original(method, path, body)
+
+        stale.request = done_candidate
+        result = sp.complete(stale, "first", True)
+        self.assertEqual((result["state"], result["autoNext"]), ("succeeded", "parent-corrected"))
+        self.assertEqual(sum(call[0] == "POST" for call in stale.calls), 1)
+
+        missing = StatefulAPI(values, current="first")
+        missing.upstream_after_complete = "parent"
+        missing.failures[("GET", "/tasks/next")] = sp.RequestRejected("not found")
+        result = sp.complete(missing, "first", True)
+        self.assertEqual((result["state"], result["autoNext"]), ("succeeded", "parent-corrected"))
+        self.assertEqual(sum(call[:2] == ("POST", "/task-control/stop") for call in missing.calls), 1)
+
+        uncertain = StatefulAPI(values, current="first")
+        uncertain.upstream_after_complete = "parent"
+        uncertain.failures[("GET", "/tasks/next")] = sp.DispatchUnknown("candidate unavailable")
+        result = sp.complete(uncertain, "first", True)
+        self.assertEqual((result["state"], result["autoNext"]), ("partial", "candidate-unknown"))
+        self.assertFalse(any(call[0] == "POST" for call in uncertain.calls))
+
+    @mock.patch.object(sp.time, "sleep")
+    def test_parent_stop_failure_matrix_has_one_followup_and_no_retry(self, _sleep):
+        values = [task("parent", subTaskIds=["first"]), task("first", parentId="parent"), task("other")]
+        cases = (
+            (sp.RequestRejected("rejected"), ("partial", "followup-dispatch", False)),
+            (sp.DispatchUnknown("timeout"), ("unknown", "followup-dispatch", None)),
+        )
+        for failure, expected in cases:
+            with self.subTest(failure=failure):
+                api = StatefulAPI(values, current="first")
+                api.upstream_after_complete = "parent"
+                api.failures[("POST", "/task-control/stop")] = failure
+                result = sp.complete(api, "first")
+                self.assertEqual((result["state"], result["stage"], result["followupMutationApplied"]), expected)
+                self.assertEqual(sum(call[:2] == ("POST", "/task-control/stop") for call in api.calls), 1)
+
+        for malformed in (True, False):
+            with self.subTest(malformed=malformed):
+                api = StatefulAPI(values, current="first")
+                api.upstream_after_complete = "parent"
+                original = api.request
+                stop_sent = False
+
+                def bad_verify(method, path, body=None):
+                    nonlocal stop_sent
+                    value = original(method, path, body)
+                    if method == "POST" and path == "/task-control/stop":
+                        stop_sent = True
+                    elif stop_sent and method == "GET" and path == "/task-control/current":
+                        return {"id": 7} if malformed else dict(api.tasks["other"])
+                    return value
+
+                api.request = bad_verify
+                result = sp.complete(api, "first")
+                expected = ("unknown", "followup-verify", None) if malformed else ("partial", "followup-verify", True)
+                self.assertEqual((result["state"], result["stage"], result["followupMutationApplied"]), expected)
+                self.assertEqual(sum(call[:2] == ("POST", "/task-control/stop") for call in api.calls), 1)
 
     def test_extend_validation_and_final_mismatch(self):
         api = StatefulAPI([task("one", timeEstimate=1000)], current="one")
