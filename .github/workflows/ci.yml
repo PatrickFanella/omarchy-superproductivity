@@ -16,7 +16,7 @@ jobs:
       - name: Pin Arch Linux Archive
         run: printf 'Server = https://archive.archlinux.org/repos/2026/08/24/$repo/os/$arch\n' > /etc/pacman.d/mirrorlist
       - name: Install test tools
-        run: pacman -Syu --noconfirm git imagemagick jq nodejs python quickshell qt5-declarative qt6-declarative ttf-jetbrains-mono
+        run: pacman -Syu --noconfirm git imagemagick jq librsvg nodejs python quickshell qt5-declarative qt6-declarative ttf-jetbrains-mono
       - name: Verify release files
         run: python3 scripts/verify_release_files.py
       - name: Test backend suites
