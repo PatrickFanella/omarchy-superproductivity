@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.qmllint.ini
+*.log
+.blacktower/deepwork/

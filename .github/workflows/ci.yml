@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: archlinux:base-20260823.0.578598
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Pin Arch Linux Archive
+        run: printf 'Server = https://archive.archlinux.org/repos/2026/08/24/$repo/os/$arch\n' > /etc/pacman.d/mirrorlist
+      - name: Install test tools
+        run: pacman -Syu --noconfirm git imagemagick jq nodejs python quickshell qt6-declarative ttf-jetbrains-mono
+      - name: Verify release files
+        run: python3 scripts/verify_release_files.py
+      - name: Test backend suites
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest tests/test_backend.py tests/test_phase1_backend.py tests/test_preview_assets.py
+      - name: Test JavaScript
+        run: node --test tests/*.test.js
+      - name: Compile backend
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m py_compile backend/superproductivity.py
+      - name: Validate plugin and lint QML against Omarchy
+        run: |
+          git init /tmp/omarchy
+          git -C /tmp/omarchy remote add origin https://github.com/basecamp/omarchy.git
+          git -C /tmp/omarchy fetch --depth 1 origin b86d4505c11b71f90b7bd14d6a80676863a70775
+          git -C /tmp/omarchy checkout --detach FETCH_HEAD
+          /tmp/omarchy/bin/omarchy-plugin-validate .
+          qmllint -I /tmp/omarchy/shell BarWidget.qml Panel.qml Service.qml
+      - name: Verify deterministic default sound
+        run: |
+          python3 scripts/generate_default_sound.py
+          git diff --exit-code -- assets/timer-complete.wav
+      - name: Verify synthetic preview assets
+        run: |
+          python3 scripts/generate_preview_assets.py
+          git diff --exit-code -- assets/demo.gif assets/preview-src assets/screenshots

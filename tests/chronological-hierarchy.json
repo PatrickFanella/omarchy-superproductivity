@@ -1,0 +1,18 @@
+{
+  "tasks": [
+    {"id":"unscheduled","title":"Unscheduled","depth":0,"subTaskIds":[]},
+    {"id":"late-parent","title":"Late","depth":0,"dueWithTime":300,"subTaskIds":["late-second","late-first"]},
+    {"id":"late-first","title":"First child","depth":1,"parentId":"late-parent","dueWithTime":1,"subTaskIds":[]},
+    {"id":"orphan-late","title":"Orphan late","depth":1,"parentId":"missing","dueWithTime":250,"subTaskIds":[]},
+    {"id":"tie-first","title":"Tie first","depth":0,"dueWithTime":100,"subTaskIds":[]},
+    {"id":"early-parent","title":"Early","depth":0,"dueWithTime":50,"subTaskIds":["early-child"]},
+    {"id":"early-child","title":"Early child","depth":1,"parentId":"early-parent","dueWithTime":999,"subTaskIds":[]},
+    {"id":"tie-second","title":"Tie second","depth":0,"dueWithTime":100,"subTaskIds":[]},
+    {"id":"late-second","title":"Second child","depth":1,"parentId":"late-parent","subTaskIds":[]},
+    {"id":"zero","title":"Zero","depth":0,"parentId":"","dueWithTime":0,"subTaskIds":[]}
+  ],
+  "expectedIds": [
+    "early-parent", "early-child", "tie-first", "tie-second", "orphan-late",
+    "late-parent", "late-second", "late-first", "unscheduled", "zero"
+  ]
+}

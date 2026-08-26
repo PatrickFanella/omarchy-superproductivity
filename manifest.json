@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "id": "patrickfanella.superproductivity",
+  "name": "Super Productivity",
+  "version": "1.0.0",
+  "author": "Patrick Fanella",
+  "license": "MIT",
+  "description": "Track and control Super Productivity tasks from the Omarchy bar, with all widget settings available inside the popup.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Super Productivity",
+    "description": "Live countdown, task controls, Quick Add, Today hierarchy, alerts, and in-plugin settings in one popup.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "pollSeconds": 5,
+      "maxTitleWidth": 300,
+      "showIdle": true,
+      "alertEnabled": true,
+      "soundEnabled": true,
+      "alertVolume": 100,
+      "soundPath": "",
+      "notificationUrgency": "critical",
+      "autoStartNext": false,
+      "autoNextWindowMinutes": 30,
+      "quickAddSwitch": false
+    },
+    "schema": [
+      {
+        "key": "pollSeconds",
+        "type": "integer",
+        "label": "Status refresh",
+        "description": "Seconds between helper checks. The countdown continues locally between checks.",
+        "min": 2,
+        "max": 30,
+        "step": 1,
+        "defaultValue": 5
+      },
+      {
+        "key": "maxTitleWidth",
+        "type": "integer",
+        "label": "Maximum bar width",
+        "description": "Maximum width in pixels before the task title is shortened.",
+        "min": 120,
+        "max": 520,
+        "step": 20,
+        "defaultValue": 300
+      },
+      {
+        "key": "showIdle",
+        "type": "boolean",
+        "label": "Show while idle",
+        "description": "Keep a quiet Super Productivity marker in the bar when no task is active.",
+        "defaultValue": true
+      },
+      {
+        "key": "alertEnabled",
+        "type": "boolean",
+        "label": "Task alerts",
+        "description": "Notify when a countdown expires or a scheduled task reaches its start time, including while tracking.",
+        "defaultValue": true
+      },
+      {
+        "key": "soundEnabled",
+        "type": "boolean",
+        "label": "Play alert sound",
+        "description": "Play the configured sound for countdown-expiry and scheduled-start alerts.",
+        "defaultValue": true
+      },
+      {
+        "key": "alertVolume",
+        "type": "integer",
+        "label": "Alert volume",
+        "description": "Volume for countdown and scheduled-start alert sounds and previews.",
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "defaultValue": 100
+      },
+      {
+        "key": "soundPath",
+        "type": "string",
+        "label": "Alert sound path",
+        "description": "Custom sound used by countdown-expiry and scheduled-start alerts. Leave blank for the bundled sound.",
+        "defaultValue": ""
+      },
+      {
+        "key": "notificationUrgency",
+        "type": "enum",
+        "label": "Notification urgency",
+        "description": "Notification urgency used for countdown-expiry and scheduled-start alerts.",
+        "options": ["low", "normal", "critical"],
+        "defaultValue": "critical"
+      },
+      {
+        "key": "autoStartNext",
+        "type": "boolean",
+        "label": "Start next after Complete",
+        "description": "After a panel-issued Complete, start the next runnable child or Today task when no other task became current.",
+        "defaultValue": false
+      },
+      {
+        "key": "autoNextWindowMinutes",
+        "type": "integer",
+        "label": "Auto-next schedule window",
+        "description": "Only scheduled tasks within ±window.",
+        "min": 1,
+        "max": 1440,
+        "step": 5,
+        "defaultValue": 30
+      },
+      {
+        "key": "quickAddSwitch",
+        "type": "boolean",
+        "label": "Add & switch",
+        "description": "When checked, Enter and the inline plus create the task and switch to it.",
+        "defaultValue": false
+      }
+    ]
+  }
+}
