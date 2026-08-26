@@ -22,6 +22,7 @@ The helper:
 - sends the token only to an HTTP or HTTPS URL whose host is exactly `localhost`, `127.0.0.1`, or `::1`;
 - rejects URL credentials, queries, fragments, redirects, and proxy use;
 - rejects token files that are not regular, user-owned files with no group or world permissions;
+- caps token input at 16 KiB, local API responses at 8 MiB, and bridge output at 4 MiB;
 - opens token and lock files without following symlinks and checks for a token-file replacement race;
 - serializes plugin mutations with an advisory `flock` in a private runtime directory;
 - starts `notify-send`, `pw-play`, `paplay`, `canberra-gtk-play`, `hyprctl`, `gtk-launch`, or `xdg-open` with argument arrays and no shell;

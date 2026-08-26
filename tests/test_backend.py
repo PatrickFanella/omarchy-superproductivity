@@ -515,6 +515,16 @@ class BackendTests(unittest.TestCase):
             token_path.chmod(0o600)
             self.assertEqual(sp.read_token({"SUPER_PRODUCTIVITY_TOKEN_FILE": str(token_path)}), "secret")
 
+    def test_token_sources_reject_oversized_values(self):
+        with self.assertRaisesRegex(sp.BridgeError, "maximum size"):
+            sp.read_token({"SP_LOCAL_REST_TOKEN": "x" * (sp.MAX_TOKEN_BYTES + 1)})
+        with tempfile.TemporaryDirectory() as directory:
+            token_path = Path(directory) / "token"
+            token_path.write_bytes(b"x" * (sp.MAX_TOKEN_BYTES + 1))
+            token_path.chmod(0o600)
+            with self.assertRaisesRegex(sp.BridgeError, "maximum size"):
+                sp.read_token({"SUPER_PRODUCTIVITY_TOKEN_FILE": str(token_path)})
+
     @mock.patch.object(sp.urllib.request, "build_opener")
     def test_client_builds_proxyless_redirect_rejecting_opener(self, build_opener):
         sp.Client("http://127.0.0.1:3876", "secret")
@@ -583,6 +593,34 @@ class BackendTests(unittest.TestCase):
         client.opener.open = mock.Mock(return_value=response)
         with self.assertRaises(sp.DispatchUnknown):
             client.request("POST", "/tasks", {"title": "x"})
+
+    def test_client_rejects_oversized_success_and_error_bodies(self):
+        response = mock.MagicMock()
+        response.headers = {}
+        response.read.return_value = b"x" * (sp.MAX_API_RESPONSE_BYTES + 1)
+        response.__enter__.return_value = response
+        client = sp.Client("http://127.0.0.1", "")
+        client.opener.open = mock.Mock(return_value=response)
+        with self.assertRaisesRegex(sp.DispatchUnknown, "maximum size"):
+            client.request("GET", "/tasks")
+
+        error = sp.urllib.error.HTTPError(
+            "http://127.0.0.1/tasks", 500, "error", {},
+            io.BytesIO(b"x" * (sp.MAX_API_RESPONSE_BYTES + 1)),
+        )
+        client.opener.open = mock.Mock(side_effect=error)
+        with self.assertRaises(sp.DispatchUnknown):
+            client.request("POST", "/tasks", {"title": "x"})
+
+    def test_client_rejects_declared_oversized_body_before_read(self):
+        response = mock.MagicMock()
+        response.headers = {"Content-Length": str(sp.MAX_API_RESPONSE_BYTES + 1)}
+        response.__enter__.return_value = response
+        client = sp.Client("http://127.0.0.1", "")
+        client.opener.open = mock.Mock(return_value=response)
+        with self.assertRaisesRegex(sp.DispatchUnknown, "maximum size"):
+            client.request("GET", "/tasks")
+        response.read.assert_not_called()
 
     def test_mutation_lock_rejects_insecure_runtime_without_chmod(self):
         if not sys.platform.startswith("linux"):
@@ -728,6 +766,20 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(len(lines), 1)
         self.assertEqual(json.loads(lines[0]), {"ok": False, "error": "failed"})
+
+    def test_main_replaces_oversized_output_before_stdout(self):
+        stream = io.StringIO()
+        with (
+            mock.patch.object(sp, "MAX_OUTPUT_BYTES", 100),
+            mock.patch.object(sp, "run", return_value=({"ok": True, "data": "x" * 1000}, 0)),
+            contextlib.redirect_stdout(stream),
+        ):
+            code = sp.main(["status"])
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            json.loads(stream.getvalue()),
+            {"ok": False, "error": "Bridge output exceeds the maximum size"},
+        )
 
 
 if __name__ == "__main__":

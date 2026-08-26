@@ -330,6 +330,8 @@ Omarchy plugins run unsandboxed inside `omarchy-shell`. This plugin starts its b
 
 The helper disables HTTP proxies and rejects redirects. A direct token environment override is accepted. Otherwise, the token path must be a regular file owned by your user with no group or world permission bits. Mode `0600` is recommended, but any owner permissions that keep all group and world bits clear are accepted. The helper opens token and lock files without following symlinks and passes subprocess arguments as arrays without a shell. The mutation lock lives in a private `$XDG_RUNTIME_DIR` directory, or a private per-user directory under `/tmp` when that variable is unavailable.
 
+The bridge caps token input at 16 KiB, each local API response at 8 MiB, and the final JSON line sent to Quickshell at 4 MiB. Oversized data fails closed before it can accumulate unbounded output in the shell.
+
 Loopback HTTP does not authenticate the listening process. While Super Productivity is not listening, another trusted local account could bind the same port and receive the token on the next request. See [Security policy](SECURITY.md) for the full boundary.
 
 `status`, mutation results, and API errors can contain task titles, task IDs, project names, dates, and other work data. Remove those values before sharing logs. Never share the token or an `Authorization` header.

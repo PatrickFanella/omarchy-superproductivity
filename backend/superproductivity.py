@@ -49,6 +49,9 @@ TAG_RE = re.compile(r"(?<!\S)#([\w-]+)", re.UNICODE)
 PROJECT_MARKER_RE = re.compile(r"(?<!\S)\+")
 MAX_TASK_ID_LENGTH = 255
 MAX_ALERT_TITLE_LENGTH = 200
+MAX_TOKEN_BYTES = 16 * 1024
+MAX_API_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 MAX_SOUND_SIZE = 20 * 1024 * 1024
 NOTIFICATION_TIMEOUT = 10
 SOUND_PLAYBACK_TIMEOUT = 60
@@ -118,6 +121,8 @@ def read_token(env: dict[str, str] | None = None) -> str:
     values = os.environ if env is None else env
     direct = values.get("SP_LOCAL_REST_TOKEN") or values.get("SUPER_PRODUCTIVITY_TOKEN")
     if direct:
+        if len(direct.encode("utf-8")) > MAX_TOKEN_BYTES:
+            raise BridgeError("Token exceeds the maximum size")
         return direct.strip()
     if "SUPER_PRODUCTIVITY_TOKEN_FILE" in values:
         path = Path(values["SUPER_PRODUCTIVITY_TOKEN_FILE"]).expanduser()
@@ -146,9 +151,17 @@ def read_token(env: dict[str, str] | None = None) -> str:
         opened_stat = os.fstat(descriptor)
         if (opened_stat.st_dev, opened_stat.st_ino) != (file_stat.st_dev, file_stat.st_ino):
             raise BridgeError("Token file changed while being read")
-        with os.fdopen(descriptor, encoding="utf-8") as token_file:
-            descriptor = -1
-            return token_file.read().strip()
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise BridgeError("Token file must be a regular file")
+        if opened_stat.st_size > MAX_TOKEN_BYTES:
+            raise BridgeError("Token file exceeds the maximum size")
+        payload = os.read(descriptor, MAX_TOKEN_BYTES + 1)
+        if len(payload) > MAX_TOKEN_BYTES:
+            raise BridgeError("Token file exceeds the maximum size")
+        try:
+            return payload.decode("utf-8").strip()
+        except UnicodeDecodeError as error:
+            raise BridgeError("Token file must contain UTF-8 text") from error
     finally:
         if descriptor >= 0:
             os.close(descriptor)
@@ -175,11 +188,11 @@ class Client:
         )
         try:
             with self.opener.open(request, timeout=5) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+                payload = _read_json_payload(response)
         except urllib.error.HTTPError as error:
             try:
                 try:
-                    error_payload = json.loads(error.read().decode("utf-8"))
+                    error_payload = _read_json_payload(error)
                 except Exception as read_error:
                     raise DispatchUnknown(
                         f"Could not determine whether Super Productivity applied the request: HTTP {error.code}"
@@ -207,6 +220,26 @@ class Client:
         if isinstance(payload, dict) and payload.get("ok") is True and "data" in payload:
             return payload["data"]
         return payload
+
+
+def _read_json_payload(stream: Any) -> Any:
+    content_length = None
+    headers = getattr(stream, "headers", None)
+    if headers is not None:
+        try:
+            content_length = headers.get("Content-Length")
+        except (AttributeError, TypeError):
+            content_length = None
+    if content_length is not None:
+        try:
+            if int(content_length) > MAX_API_RESPONSE_BYTES:
+                raise DispatchUnknown("Super Productivity response exceeds the maximum size")
+        except ValueError:
+            pass
+    payload = stream.read(MAX_API_RESPONSE_BYTES + 1)
+    if len(payload) > MAX_API_RESPONSE_BYTES:
+        raise DispatchUnknown("Super Productivity response exceeds the maximum size")
+    return json.loads(payload.decode("utf-8"))
 
 
 def _duration_ms(value: str) -> int:
@@ -1720,7 +1753,11 @@ def main(argv: list[str] | None = None) -> int:
         output, code = run(list(sys.argv[1:] if argv is None else argv))
     except Exception as error:
         output, code = {"ok": False, "error": str(error) or error.__class__.__name__}, 1
-    sys.stdout.write(json.dumps(output, ensure_ascii=False, separators=(",", ":")) + "\n")
+    encoded = json.dumps(output, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > MAX_OUTPUT_BYTES:
+        encoded = b'{"ok":false,"error":"Bridge output exceeds the maximum size"}'
+        code = 1
+    sys.stdout.write(encoded.decode("utf-8") + "\n")
     return code
 
 
