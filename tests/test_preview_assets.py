@@ -17,6 +17,7 @@ SPEC.loader.exec_module(PREVIEW)
 class PreviewAssetTests(unittest.TestCase):
     def test_committed_final_assets_are_safe_and_well_formed(self) -> None:
         pngs = (
+            ROOT / "preview.png",
             ROOT / "assets" / "screenshots" / "panel.png",
             ROOT / "assets" / "screenshots" / "panel-reduced-motion.png",
         )
@@ -36,6 +37,12 @@ class PreviewAssetTests(unittest.TestCase):
         PREVIEW.verify_final_asset(live)
         dimensions = PREVIEW.run(["magick", "identify", "-format", "%Wx%H", str(live)])
         self.assertEqual(dimensions, "844x1305")
+
+    def test_marketplace_preview_matches_generated_panel(self) -> None:
+        self.assertEqual(
+            (ROOT / "preview.png").read_bytes(),
+            (ROOT / "assets" / "screenshots" / "panel.png").read_bytes(),
+        )
 
 
 if __name__ == "__main__":

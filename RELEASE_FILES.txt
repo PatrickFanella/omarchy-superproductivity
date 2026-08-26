@@ -26,6 +26,7 @@ assets/screenshots/panel.png
 assets/timer-complete.wav
 backend/superproductivity.py
 manifest.json
+preview.png
 scripts/generate_default_sound.py
 scripts/generate_preview_assets.py
 scripts/verify_release_files.py

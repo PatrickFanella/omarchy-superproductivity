@@ -589,6 +589,7 @@ def main() -> int:
     source_dir = root / "assets" / "preview-src"
     screenshot_dir = root / "assets" / "screenshots"
     gif_path = root / "assets" / "demo.gif"
+    marketplace_preview = root / "preview.png"
     source_dir.mkdir(parents=True, exist_ok=True)
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     if shutil.which("magick") is None:
@@ -606,6 +607,7 @@ def main() -> int:
 
     scan_sources(source_dir)
     run(["magick", str(png_frames[3]), "-strip", str(screenshot_dir / "panel.png")])
+    run(["magick", str(png_frames[3]), "-strip", str(marketplace_preview)])
     run(["magick", str(png_frames[7]), "-strip", str(screenshot_dir / "panel-reduced-motion.png")])
 
     gif_command = ["magick"]
@@ -617,7 +619,12 @@ def main() -> int:
     ])
     run(gif_command)
 
-    final_assets = (screenshot_dir / "panel.png", screenshot_dir / "panel-reduced-motion.png", gif_path)
+    final_assets = (
+        marketplace_preview,
+        screenshot_dir / "panel.png",
+        screenshot_dir / "panel-reduced-motion.png",
+        gif_path,
+    )
     for generated in final_assets:
         verify_dimensions(generated)
         verify_final_asset(generated)
