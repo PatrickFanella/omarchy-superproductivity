@@ -44,6 +44,7 @@ jobs:
           sha256sum --check /tmp/sound-before.sha256
       - name: Verify synthetic preview assets
         run: |
-          sha256sum assets/demo.gif assets/preview-src/*.svg assets/screenshots/*.png > /tmp/previews-before.sha256
+          sha256sum assets/preview-src/*.svg > /tmp/previews-before.sha256
           python3 scripts/generate_preview_assets.py
           sha256sum --check /tmp/previews-before.sha256
+          python3 -m unittest tests/test_preview_assets.py
