@@ -39,9 +39,11 @@ jobs:
           qmllint -I /tmp/omarchy/shell BarWidget.qml Panel.qml Service.qml
       - name: Verify deterministic default sound
         run: |
+          sha256sum assets/timer-complete.wav > /tmp/sound-before.sha256
           python3 scripts/generate_default_sound.py
-          git diff --exit-code -- assets/timer-complete.wav
+          sha256sum --check /tmp/sound-before.sha256
       - name: Verify synthetic preview assets
         run: |
+          sha256sum assets/demo.gif assets/preview-src/*.svg assets/screenshots/*.png > /tmp/previews-before.sha256
           python3 scripts/generate_preview_assets.py
-          git diff --exit-code -- assets/demo.gif assets/preview-src assets/screenshots
+          sha256sum --check /tmp/previews-before.sha256
