@@ -78,7 +78,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property real progress: estimateMs > 0
     ? Math.max(0, Math.min(1, spentMs / estimateMs)) : 0
-  readonly property bool currentHasChildren: hasRetainedChildren(task)
+  readonly property bool currentHasChildren: hasChildren(task)
   readonly property bool quickAddSwitchSource: engine && engine.quickAddSwitch !== undefined
     ? engine.quickAddSwitch === true : boolSetting("quickAddSwitch", false)
   readonly property bool goTopVisible: scroller.contentY > Style.space(72)
@@ -120,6 +120,20 @@ Panel {
     return !!ids && typeof ids.length === "number" && ids.length > 0
   }
 
+  function hasVisibleChildren(value) {
+    var parentId = taskId(value)
+    var values = engine ? engine.todayTasks : null
+    if (parentId === "" || !values || typeof values.length !== "number") return false
+    for (var i = 0; i < values.length; i++) {
+      if (String(values[i] && values[i].parentId || "") === parentId) return true
+    }
+    return false
+  }
+
+  function hasChildren(value) {
+    return hasRetainedChildren(value) || hasVisibleChildren(value)
+  }
+
   function hasMatchingUnfinishedChild(value) {
     var ids = value ? value.subTaskIds : null
     var values = engine ? engine.todayTasks : null
@@ -134,7 +148,7 @@ Panel {
   }
 
   function runnable(value) {
-    return !!value && !isComplete(value) && !hasRetainedChildren(value)
+    return !!value && !isComplete(value) && !hasChildren(value)
   }
 
   function unfinishedTasks(values) {
@@ -1579,7 +1593,7 @@ Panel {
                   readonly property string taskIdentifier: root.taskId(modelData)
                   readonly property bool current: taskIdentifier !== "" && taskIdentifier === root.taskId(root.task)
                   readonly property bool pending: taskIdentifier !== "" && taskIdentifier === root.mutationTaskId
-                  readonly property bool parentRow: root.hasRetainedChildren(modelData)
+                  readonly property bool parentRow: root.hasChildren(modelData)
                   readonly property bool canStart: root.runnable(modelData)
                   readonly property bool expanded: !root.isParentCollapsed(taskIdentifier)
                   readonly property bool overdue: root.taskEstimate(modelData, current) > 0
@@ -1592,7 +1606,6 @@ Panel {
                     if (parentRow) {
                       if (searchField.text.trim() === "") root.toggleParent(taskIdentifier)
                     }
-                    else if (canStart) root.startTodayTask(modelData)
                   }
 
                   width: content.width
@@ -1615,7 +1628,7 @@ Panel {
                   Accessible.description: parentRow
                     ? ((searchField.text.trim() === "" ? "Press Enter to toggle subtasks. " : "Search result; collapse state is unchanged. ")
                       + "Complete is not available. Complete subtasks first; Super Productivity manages the parent.")
-                    : "Use Start or press Enter to start. Use Complete or press C to complete"
+                    : "Use the Start button to start tracking. Use Complete or press C to complete"
                   Accessible.onPressAction: activate()
 
                   Keys.onPressed: function(event) { root.handleRowKey(event, todayRow) }

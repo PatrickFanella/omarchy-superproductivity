@@ -110,7 +110,7 @@ Today appears below Quick Add. It contains incomplete top-level tasks and their 
 
 Parent rows expand and collapse. Click a parent row, or press Enter or Space while it has focus, to toggle its children. A search temporarily reveals the parent of a matching child without changing the saved collapse state.
 
-Each runnable leaf row has explicit **Start** and **Complete** controls. Parents have neither action. Click a parent's title or context area to toggle its children. Click a runnable leaf's title or context area to start it. This makes the chronological Today list work like a calendar agenda: scan by time, then activate the task text. Button hit areas do not overlap the text area, so one click sends one action.
+Each runnable leaf row has explicit **Start** and **Complete** controls. Parents have neither action. Click a parent's title or context area to toggle its children. Clicking any other row only selects it; tracking starts exclusively from that row's **Start** button. Button hit areas do not overlap the text area, so one click sends one action.
 
 The current leaf row's **Complete** control uses current-task completion and follows **Start next after Complete**. A noncurrent leaf uses targeted list completion and never starts another task. A task with retained `subTaskIds` is always a parent, even when every child is done. It has no **Complete** control. Pressing <kbd>C</kbd> on it reports `Complete subtasks first; Super Productivity manages the parent.` and sends no mutation.
 
@@ -129,7 +129,7 @@ The floating **Go top** control appears after you scroll down. It scrolls to the
 | Open the panel | Focuses the current Today row when visible, otherwise the first Today row. If Today has no row, focus stays on the panel. |
 | <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> | Moves through every enabled panel control. At an edge, focus can move to the adjacent bar panel. |
 | <kbd>↑</kbd> / <kbd>↓</kbd> or <kbd>K</kbd> / <kbd>J</kbd> | Moves between Today rows when a row or one of its controls has focus. |
-| <kbd>Enter</kbd> / <kbd>Space</kbd> | Activates the focused non-text control. On a Today parent row, toggles its children. On a runnable leaf row, starts it. |
+| <kbd>Enter</kbd> / <kbd>Space</kbd> | Activates the focused non-text control. On a Today parent row, toggles its children. On a leaf row, keeps it selected; move focus to **Start** to begin tracking. |
 | <kbd>C</kbd> | Completes the focused leaf. On a parent it reports that subtasks must be completed first and sends no mutation. It does nothing outside Today row focus. |
 | <kbd>/</kbd> | Outside a text field, expands Today and focuses its search field. |
 | <kbd>Home</kbd> | Runs **Go top** unless a text field owns the key. |
@@ -202,7 +202,7 @@ Select the top-right gear in the popup to open the **Super Productivity** config
 | Auto-next schedule window | 30 minutes | 1–1440 minutes, step 5 | Only scheduled tasks whose finite start time is within ±window are eligible. |
 | Add & switch | Off | On or off | When on, Enter and the inline **+** create the task and switch to it. |
 
-Auto-next scans the next sibling first, then the remaining flattened Today order. It skips unscheduled tasks, tasks with invalid start times, scheduled tasks outside the configured ±window, done tasks, every parent with retained `subTaskIds`, and the completed task. The default window is 30 minutes. It never wraps to the start.
+Auto-next scans the next sibling first, then the remaining flattened Today order. A child without its own start time inherits its immediate parent's valid scheduled time for this eligibility check. It skips tasks that remain unscheduled, tasks with invalid start times, scheduled tasks outside the configured ±window, done tasks, every parent with retained `subTaskIds`, and the completed task. The default window is 30 minutes. It never wraps to the start.
 
 After completion, the helper allows the current task to be null or the completed task's exact captured parent during the 300 ms grace period. It rechecks immediately before its single follow-up POST. An unrelated current task always wins and is never changed. If Super Productivity promotes the exact parent and no eligible auto-next candidate remains, the helper rechecks the parent and sends one untargeted Stop to undo that promotion, even when auto-next is disabled. Because Stop cannot name its target, another client can still switch tasks after the last read but before Stop is applied; this residual race cannot be eliminated by the local API.
 

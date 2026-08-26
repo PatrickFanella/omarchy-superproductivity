@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Hydrated Today and auto-next from done-inclusive task data so retained completed children do not appear missing.
 - Reconciled completion-triggered parent promotion for enabled and disabled auto-next, while preserving unrelated current tasks and bounding correction to one verified follow-up request.
+- Made non-parent row clicks selection-only so tracking begins exclusively from the explicit **Start** button.
+- Inherited a scheduled parent's start time when evaluating an unscheduled sibling for auto-next.
 
 ## [1.0.0] - 2026-08-25
 

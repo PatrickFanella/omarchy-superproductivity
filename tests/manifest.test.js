@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, "..")
 const manifestPath = path.join(root, "manifest.json")
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"))
 const serviceSource = fs.readFileSync(path.join(root, "Service.qml"), "utf8")
+const panelSource = fs.readFileSync(path.join(root, "Panel.qml"), "utf8")
 
 test("manifest declares the publication contract", () => {
   assert.equal(manifest.schemaVersion, 1)
@@ -37,6 +38,13 @@ test("service does not depend on Shell Settings", () => {
   assert.doesNotMatch(serviceSource, /callIfLoaded/)
   assert.doesNotMatch(serviceSource, /function\s+openSettings\s*\(/)
   assert.doesNotMatch(serviceSource, /function\s+settings\s*\(/)
+})
+
+test("Today row activation never starts tracking", () => {
+  const activation = panelSource.match(/function activate\(\) \{([\s\S]*?)\n\s*\}/)
+  assert.ok(activation, "Today row activate function must exist")
+  assert.doesNotMatch(activation[1], /startTodayTask/)
+  assert.match(panelSource, /onClicked: root\.startTodayTask\(todayRow\.modelData\)/)
 })
 
 test("sound previews queue immutable volume snapshots", () => {

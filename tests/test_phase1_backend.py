@@ -110,6 +110,20 @@ class PhaseOneBackendTests(unittest.TestCase):
         ])
         self.assertEqual(sp._auto_next_candidate(ordered, "first", 10), "second")
 
+    def test_auto_next_child_inherits_immediate_parent_schedule(self):
+        now = 10_000
+        ordered = sp.chronological_hierarchy([
+            task("parent", dueWithTime=now, subTaskIds=["first", "second"]),
+            task("first", parentId="parent"),
+            task("second", parentId="parent"),
+        ])
+        self.assertEqual(sp._auto_next_candidate(ordered, "first", now, 1), "second")
+        ordered[2]["dueWithTime"] = now + 2
+        self.assertIsNone(sp._auto_next_candidate(ordered, "first", now, 1))
+        ordered[0]["dueWithTime"] = None
+        ordered[2]["dueWithTime"] = None
+        self.assertIsNone(sp._auto_next_candidate(ordered, "first", now, 1))
+
     def test_auto_next_window_boundaries_and_candidate_order(self):
         now = 10_000_000
         window = 30 * 60_000
