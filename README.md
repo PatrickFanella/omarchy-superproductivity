@@ -13,6 +13,7 @@ Show and control the current [Super Productivity](https://super-productivity.com
 - Adds a task without switching, or adds it and switches once, through one compact persistent inline checkbox.
 - Alerts once when a countdown expires or a scheduled task reaches its start time, whether idle or tracking.
 - Tests notifications and previews alert sounds. Panel previews use the displayed volume; IPC previews use the configured volume.
+- Localizes the bar, panel, accessibility text, errors, statuses, and notifications from the system locale, with per-key English fallback.
 - Opens or focuses the Super Productivity desktop app.
 - Keeps one polling and mutation service across all monitors.
 
@@ -34,6 +35,12 @@ The animated preview uses synthetic task and project names. The static [reduced-
 - A direct REST API token environment override, or a private regular token file owned by your user with no group or world permissions. Mode `0600` is recommended.
 
 The open action tries `hyprctl`, `gtk-launch`, and `xdg-open`, in that order.
+
+## Localization
+
+The plugin follows the system locale. It supports English, German, Spanish, French, Italian, Brazilian Portuguese, Dutch, Polish, Croatian, and Simplified Chinese. Missing translations fall back to English per key.
+
+The plugin localizes its interface, accessibility text, statuses, errors, and notifications. Task titles, project names, tags, Quick Add syntax, settings keys, and IPC or CLI values remain unchanged.
 
 ## Install
 

@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-28
+
+### Changed
+
+- Documented the supported languages and localization boundaries in the README and Omarchy plugin descriptions.
+
 ## [1.1.0] - 2026-08-27
 
 ### Added
@@ -67,6 +73,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Limited auto-next to scheduled tasks with finite start times inside a configurable ±window of 1–1440 minutes. The default is ±30 minutes; unscheduled and distant tasks are skipped.
 - Made sound previews queue volume snapshots. Panel previews use displayed volume, IPC previews use configured volume, invalid explicit values are rejected, and alerts use configured volume.
 
-[Unreleased]: https://github.com/patrickfanella/omarchy-superproductivity/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/patrickfanella/omarchy-superproductivity/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/patrickfanella/omarchy-superproductivity/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/patrickfanella/omarchy-superproductivity/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/patrickfanella/omarchy-superproductivity/releases/tag/v1.0.0
