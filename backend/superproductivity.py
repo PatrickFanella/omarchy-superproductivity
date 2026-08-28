@@ -61,6 +61,9 @@ AUTO_NEXT_GRACE = 0.3
 DEFAULT_AUTO_NEXT_WINDOW_MINUTES = 30
 MAX_ESTIMATE_MS = 365 * 24 * 60 * 60 * 1000
 URGENCIES = {"low", "normal", "critical"}
+NOTIFICATION_OPTION_TOKENS = {
+    "--urgency", "--notification-title", "--body", "--sound", "--silent", "--volume", "--",
+}
 SOUND_SUFFIXES = {".wav", ".ogg", ".oga", ".flac", ".mp3"}
 DEFAULT_SOUND = Path(__file__).resolve().parents[1] / "assets" / "timer-complete.wav"
 
@@ -723,7 +726,55 @@ def _current_id(value: Any) -> str | None:
     return None if current is None else current["id"]
 
 
+_MESSAGE_KEYS = {
+    "Invalid task ID": "invalid-task-id",
+    "Auto-next window must be an integer from 1 to 1440 minutes": "invalid-auto-next-window",
+    "Task started": "task-started",
+    "Task stopped": "task-stopped",
+    "Task extended": "task-extended",
+    "Task added": "task-added",
+    "Listed task completed": "listed-task-completed",
+    "Current task changed": "current-task-changed",
+    "Current task changed before switch": "current-task-changed-before-switch",
+    "Current task changed before completion": "current-task-changed-before-completion",
+    "Unexpected current task": "unexpected-current-task",
+    "Stop postcondition did not hold": "stop-postcondition-failed",
+    "Completion postcondition did not hold": "completion-postcondition-failed",
+    "Estimate changed after write": "estimate-changed-after-write",
+    "Task is already done": "task-already-done",
+    "Requested task ID changed": "requested-task-id-changed",
+    "Task retains subtasks; complete the parent in Super Productivity": "task-retains-subtasks",
+    "Creation response did not contain a task ID": "creation-missing-task-id",
+    "Minutes must be a whole number from 1 to 1440": "invalid-minutes",
+    "Estimate must be finite and at most 365 days": "invalid-estimate",
+    "Malformed requested task": "malformed-requested-task",
+    "Malformed child state": "malformed-child-state",
+    "Missing child": "missing-child",
+    "No unfinished child": "no-unfinished-child",
+    "Completed task remains current": "completed-task-remains-current",
+    "Task completed": "task-completed",
+    "Auto-next postcondition did not hold": "auto-next-postcondition-failed",
+    "Task completed and next task started": "task-completed-and-next-started",
+    "Parent correction postcondition did not hold": "parent-correction-postcondition-failed",
+    "Task completed and promoted parent stopped": "task-completed-and-parent-stopped",
+    "Completed listed task remains current": "completed-listed-task-remains-current",
+    "Task added and started": "task-added-and-started",
+}
+_UNSET = object()
+
+
 def mutation_result(kind: str, target: str | None, state: str, stage: str, applied: bool | None, **values: Any) -> dict[str, Any]:
+    message = values.pop("message", "")
+    message_key = values.pop("messageKey", _UNSET)
+    message_args = values.pop("messageArgs", _UNSET)
+    if message_key is _UNSET:
+        message_key = None
+    elif not isinstance(message_key, str) or not message_key or _has_unicode_control(message_key):
+        raise BridgeError("Invalid mutation message key")
+    if message_args is not _UNSET and not isinstance(message_args, dict):
+        raise BridgeError("Invalid mutation message arguments")
+    if message_args is not _UNSET and message_key is None:
+        raise BridgeError("Mutation message arguments require a message key")
     result = {
         "ok": state == "succeeded",
         "kind": kind,
@@ -736,10 +787,28 @@ def mutation_result(kind: str, target: str | None, state: str, stage: str, appli
         "finalCurrentId": values.pop("finalCurrentId", None),
         "raceDetected": values.pop("raceDetected", False),
         "createdTaskId": values.pop("createdTaskId", None),
-        "message": values.pop("message", ""),
+        "message": message,
     }
+    if message_key is not None:
+        result["messageKey"] = message_key
+    if message_args is not _UNSET:
+        result["messageArgs"] = message_args
     result.update(values)
     return result
+
+
+def fixed_mutation_result(
+    kind: str, target: str | None, state: str, stage: str, applied: bool | None,
+    *, message: str, **values: Any,
+) -> dict[str, Any]:
+    try:
+        message_key = _MESSAGE_KEYS[message]
+    except KeyError as error:
+        raise BridgeError(f"Missing semantic key for fixed mutation message: {message}") from error
+    return mutation_result(
+        kind, target, state, stage, applied,
+        message=message, messageKey=message_key, **values,
+    )
 
 
 def structured_mutator(kind: str):
@@ -826,33 +895,33 @@ def _start_unlocked(
     except BridgeError as error:
         return mutation_result(kind, task_id, "failed", "preflight", False, message=str(error))
     if not isinstance(requested, dict):
-        return mutation_result(kind, task_id, "failed", "preflight", False, message="Malformed requested task")
+        return fixed_mutation_result(kind, task_id, "failed", "preflight", False, message="Malformed requested task")
     actual_id = task_id
     children = requested.get("subTaskIds", [])
     if requested.get("parentId"):
         children = []
     elif not isinstance(children, list) or any(not isinstance(value, str) for value in children):
-        return mutation_result(kind, task_id, "conflict", "preflight", False, message="Malformed child state")
+        return fixed_mutation_result(kind, task_id, "conflict", "preflight", False, message="Malformed child state")
     elif children:
         try:
             all_tasks = client.request("GET", "/tasks?includeDone=true")
         except BridgeError as error:
             return mutation_result(kind, task_id, "failed", "preflight", False, message=str(error))
         if not isinstance(all_tasks, list):
-            return mutation_result(kind, task_id, "conflict", "preflight", False, message="Malformed child state")
+            return fixed_mutation_result(kind, task_id, "conflict", "preflight", False, message="Malformed child state")
         task_map = {item.get("id"): item for item in all_tasks if isinstance(item, dict) and isinstance(item.get("id"), str)}
         if any(child not in task_map for child in children):
-            return mutation_result(kind, task_id, "conflict", "preflight", False, message="Missing child")
+            return fixed_mutation_result(kind, task_id, "conflict", "preflight", False, message="Missing child")
         actual_id = next((child for child in children if task_map[child].get("isDone") is not True), "")
         if not actual_id:
-            return mutation_result(kind, task_id, "conflict", "preflight", False, message="No unfinished child")
+            return fixed_mutation_result(kind, task_id, "conflict", "preflight", False, message="No unfinished child")
     if expected_current_id is not _EXPECTED_CURRENT_UNSET:
         try:
             observed = _current_id(client.request("GET", "/task-control/current"))
         except BridgeError as error:
             return mutation_result(kind, task_id, "conflict", "preflight", False, expectedCurrentId=expected_current_id, message=str(error))
         if observed != expected_current_id:
-            return mutation_result(kind, task_id, "conflict", "preflight", False, expectedCurrentId=expected_current_id, observedCurrentId=observed, finalCurrentId=observed, raceDetected=True, message="Current task changed before switch")
+            return fixed_mutation_result(kind, task_id, "conflict", "preflight", False, expectedCurrentId=expected_current_id, observedCurrentId=observed, finalCurrentId=observed, raceDetected=True, message="Current task changed before switch")
     try:
         _, rejection = _request_mutation(client, "POST", "/task-control/current", {"taskId": task_id})
     except DispatchUnknown as error:
@@ -864,8 +933,8 @@ def _start_unlocked(
     except BridgeError as error:
         return mutation_result(kind, task_id, "unknown", "verify", True, message=str(error))
     if observed != actual_id:
-        return mutation_result(kind, task_id, "unknown", "verify", True, finalCurrentId=observed, observedCurrentId=observed, raceDetected=True, actualTaskId=actual_id, message="Unexpected current task")
-    return mutation_result(kind, task_id, "succeeded", "done", True, finalCurrentId=observed, observedCurrentId=observed, actualTaskId=actual_id, message="Task started")
+        return fixed_mutation_result(kind, task_id, "unknown", "verify", True, finalCurrentId=observed, observedCurrentId=observed, raceDetected=True, actualTaskId=actual_id, message="Unexpected current task")
+    return fixed_mutation_result(kind, task_id, "succeeded", "done", True, finalCurrentId=observed, observedCurrentId=observed, actualTaskId=actual_id, message="Task started")
 
 
 @structured_mutator("start")
@@ -873,7 +942,7 @@ def start(client: Client, task_id: str) -> dict[str, Any]:
     try:
         task_id = validate_task_id(task_id)
     except BridgeError as error:
-        return mutation_result("start", task_id if isinstance(task_id, str) else None, "failed", "validation", False, message=str(error))
+        return fixed_mutation_result("start", task_id if isinstance(task_id, str) else None, "failed", "validation", False, message=str(error))
     with mutation_lock():
         return _start_unlocked(client, task_id)
 
@@ -883,14 +952,14 @@ def stop(client: Client, expected_current_id: str) -> dict[str, Any]:
     try:
         expected_current_id = validate_task_id(expected_current_id)
     except BridgeError as error:
-        return mutation_result("stop", expected_current_id if isinstance(expected_current_id, str) else None, "failed", "validation", False, expectedCurrentId=expected_current_id if isinstance(expected_current_id, str) else None, message=str(error))
+        return fixed_mutation_result("stop", expected_current_id if isinstance(expected_current_id, str) else None, "failed", "validation", False, expectedCurrentId=expected_current_id if isinstance(expected_current_id, str) else None, message=str(error))
     with mutation_lock():
         try:
             observed = _current_id(client.request("GET", "/task-control/current"))
         except BridgeError as error:
             return mutation_result("stop", expected_current_id, "failed", "preflight", False, expectedCurrentId=expected_current_id, message=str(error))
         if observed != expected_current_id:
-            return mutation_result("stop", expected_current_id, "conflict", "preflight", False, expectedCurrentId=expected_current_id, observedCurrentId=observed, finalCurrentId=observed, raceDetected=True, message="Current task changed")
+            return fixed_mutation_result("stop", expected_current_id, "conflict", "preflight", False, expectedCurrentId=expected_current_id, observedCurrentId=observed, finalCurrentId=observed, raceDetected=True, message="Current task changed")
         try:
             _, rejection = _request_mutation(client, "POST", "/task-control/stop")
         except DispatchUnknown as error:
@@ -902,8 +971,8 @@ def stop(client: Client, expected_current_id: str) -> dict[str, Any]:
         except BridgeError as error:
             return mutation_result("stop", expected_current_id, "unknown", "verify", True, expectedCurrentId=expected_current_id, observedCurrentId=observed, message=str(error))
         if final is not None:
-            return mutation_result("stop", expected_current_id, "partial", "verify", True, expectedCurrentId=expected_current_id, observedCurrentId=observed, finalCurrentId=final, raceDetected=True, message="Stop postcondition did not hold")
-        return mutation_result("stop", expected_current_id, "succeeded", "done", True, expectedCurrentId=expected_current_id, observedCurrentId=observed, message="Task stopped")
+            return fixed_mutation_result("stop", expected_current_id, "partial", "verify", True, expectedCurrentId=expected_current_id, observedCurrentId=observed, finalCurrentId=final, raceDetected=True, message="Stop postcondition did not hold")
+        return fixed_mutation_result("stop", expected_current_id, "succeeded", "done", True, expectedCurrentId=expected_current_id, observedCurrentId=observed, message="Task stopped")
 
 
 def _fresh_children(client: Client, parent: dict[str, Any]) -> tuple[list[dict[str, Any]] | None, str | None]:
@@ -1027,7 +1096,8 @@ def validate_auto_next_window(value: Any) -> int:
 
 def _completion_result(task_id: str, state: str, stage: str, final_id: str | None,
                        followup_applied: bool | None, message: str, auto_next: str,
-                       candidate: str | None = None, race: bool = False) -> dict[str, Any]:
+                       candidate: str | None = None, race: bool = False,
+                       semantic: bool = False) -> dict[str, Any]:
     values: dict[str, Any] = {
         "expectedCurrentId": task_id, "observedCurrentId": task_id,
         "finalCurrentId": final_id, "followupMutationApplied": followup_applied,
@@ -1035,6 +1105,8 @@ def _completion_result(task_id: str, state: str, stage: str, final_id: str | Non
     }
     if candidate is not None:
         values["nextTaskId"] = candidate
+    if semantic:
+        values["messageKey"] = _MESSAGE_KEYS[message]
     return mutation_result("complete", task_id, state, stage, True, **values)
 
 
@@ -1042,10 +1114,10 @@ def _completion_current_result(task_id: str, current_id: str | None,
                                parent_id: str | None, candidate: str | None) -> dict[str, Any] | None:
     if current_id == task_id:
         return _completion_result(task_id, "partial", "followup-preflight", current_id, False,
-                                  "Completed task remains current", "current-not-cleared", candidate, True)
+                                  "Completed task remains current", "current-not-cleared", candidate, True, True)
     if current_id is not None and current_id != parent_id:
         return _completion_result(task_id, "succeeded", "done", current_id, False,
-                                  "Task completed", "skipped-upstream-current", candidate)
+                                  "Task completed", "skipped-upstream-current", candidate, semantic=True)
     return None
 
 
@@ -1122,14 +1194,14 @@ def _reconcile_completion(client: Client, task_id: str, parent_id: str | None,
                                           str(error), "unknown", candidate)
             if final != candidate:
                 return _completion_result(task_id, "partial", "followup-verify", final, True,
-                                          "Auto-next postcondition did not hold", "mismatch", candidate, True)
+                                          "Auto-next postcondition did not hold", "mismatch", candidate, True, True)
             return _completion_result(task_id, "succeeded", "done", final, True,
-                                      "Task completed and next task started", "started", candidate)
+                                      "Task completed and next task started", "started", candidate, semantic=True)
 
     label = "skipped-candidate" if candidate_ineligible else ("no-candidate" if auto_next else "disabled")
     if current is None:
         return _completion_result(task_id, "succeeded", "done", None, False,
-                                  "Task completed", label, candidate)
+                                  "Task completed", label, candidate, semantic=True)
 
     # Only the exact parent captured before PATCH can reach this correction path.
     try:
@@ -1141,7 +1213,7 @@ def _reconcile_completion(client: Client, task_id: str, parent_id: str | None,
         return resolved
     if current is None:
         return _completion_result(task_id, "succeeded", "done", None, False,
-                                  "Task completed", label, candidate)
+                                  "Task completed", label, candidate, semantic=True)
     try:
         _, rejection = _request_mutation(client, "POST", "/task-control/stop")
     except DispatchUnknown as error:
@@ -1158,9 +1230,10 @@ def _reconcile_completion(client: Client, task_id: str, parent_id: str | None,
     if final is not None:
         return _completion_result(task_id, "partial", "followup-verify", final, True,
                                   "Parent correction postcondition did not hold",
-                                  "parent-correction-mismatch", candidate, True)
+                                  "parent-correction-mismatch", candidate, True, True)
     return _completion_result(task_id, "succeeded", "done", None, True,
-                              "Task completed and promoted parent stopped", "parent-corrected", candidate)
+                              "Task completed and promoted parent stopped", "parent-corrected", candidate,
+                              semantic=True)
 
 
 @structured_mutator("complete-list")
@@ -1168,7 +1241,7 @@ def complete_listed_task(client: Client, task_id: str) -> dict[str, Any]:
     try:
         task_id = validate_task_id(task_id)
     except BridgeError as error:
-        return mutation_result(
+        return fixed_mutation_result(
             "complete-list", task_id if isinstance(task_id, str) else None,
             "failed", "validation", False, message=str(error),
         )
@@ -1179,11 +1252,11 @@ def complete_listed_task(client: Client, task_id: str) -> dict[str, Any]:
         except BridgeError as error:
             return mutation_result("complete-list", task_id, "failed", "preflight", False, message=str(error))
         if target["id"] != task_id:
-            return mutation_result("complete-list", task_id, "conflict", "preflight", False, message="Requested task ID changed")
+            return fixed_mutation_result("complete-list", task_id, "conflict", "preflight", False, message="Requested task ID changed")
         if target["isDone"]:
-            return mutation_result("complete-list", task_id, "conflict", "preflight", False, message="Task is already done")
+            return fixed_mutation_result("complete-list", task_id, "conflict", "preflight", False, message="Task is already done")
         if target["subTaskIds"]:
-            return mutation_result(
+            return fixed_mutation_result(
                 "complete-list", task_id, "conflict", "preflight", False,
                 message="Task retains subtasks; complete the parent in Super Productivity",
             )
@@ -1211,13 +1284,13 @@ def complete_listed_task(client: Client, task_id: str) -> dict[str, Any]:
                 expectedCurrentId=before, observedCurrentId=before, message=str(error),
             )
         if verified["id"] != task_id or not verified["isDone"]:
-            return mutation_result(
+            return fixed_mutation_result(
                 "complete-list", task_id, "partial", "verify", True,
                 expectedCurrentId=before, observedCurrentId=before, raceDetected=True,
                 message="Completion postcondition did not hold",
             )
         if before != task_id:
-            return mutation_result(
+            return fixed_mutation_result(
                 "complete-list", task_id, "succeeded", "done", True,
                 expectedCurrentId=before, observedCurrentId=before,
                 message="Listed task completed",
@@ -1231,12 +1304,12 @@ def complete_listed_task(client: Client, task_id: str) -> dict[str, Any]:
                 message=str(error),
             )
         if final == task_id:
-            return mutation_result(
+            return fixed_mutation_result(
                 "complete-list", task_id, "partial", "verify", True,
                 expectedCurrentId=before, observedCurrentId=before, finalCurrentId=final,
                 raceDetected=True, message="Completed listed task remains current",
             )
-        return mutation_result(
+        return fixed_mutation_result(
             "complete-list", task_id, "succeeded", "done", True,
             expectedCurrentId=before, observedCurrentId=before, finalCurrentId=final,
             message="Listed task completed",
@@ -1253,12 +1326,12 @@ def complete(
     try:
         task_id = validate_task_id(task_id)
     except BridgeError as error:
-        return mutation_result("complete", task_id if isinstance(task_id, str) else None, "failed", "validation", False, expectedCurrentId=task_id if isinstance(task_id, str) else None, message=str(error), autoNext="not-run")
+        return fixed_mutation_result("complete", task_id if isinstance(task_id, str) else None, "failed", "validation", False, expectedCurrentId=task_id if isinstance(task_id, str) else None, message=str(error), autoNext="not-run")
     if auto_next:
         try:
             auto_next_window_minutes = validate_auto_next_window(auto_next_window_minutes)
         except BridgeError as error:
-            return mutation_result("complete", task_id, "failed", "validation", False, expectedCurrentId=task_id, message=str(error), autoNext="not-run")
+            return fixed_mutation_result("complete", task_id, "failed", "validation", False, expectedCurrentId=task_id, message=str(error), autoNext="not-run")
     window_ms = auto_next_window_minutes * 60_000
     with mutation_lock():
         try:
@@ -1266,7 +1339,7 @@ def complete(
         except BridgeError as error:
             return mutation_result("complete", task_id, "failed", "preflight", False, expectedCurrentId=task_id, message=str(error), autoNext="not-run")
         if observed != task_id:
-            return mutation_result("complete", task_id, "conflict", "preflight", False, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=observed, raceDetected=True, message="Current task changed", autoNext="not-run")
+            return fixed_mutation_result("complete", task_id, "conflict", "preflight", False, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=observed, raceDetected=True, message="Current task changed", autoNext="not-run")
         candidate = None
         try:
             raw_target = client.request("GET", _task_path(task_id))
@@ -1274,11 +1347,11 @@ def complete(
         except BridgeError as error:
             return mutation_result("complete", task_id, "failed", "preflight", False, expectedCurrentId=task_id, observedCurrentId=observed, message=str(error), autoNext="not-run")
         if target["id"] != task_id:
-            return mutation_result("complete", task_id, "conflict", "preflight", False, expectedCurrentId=task_id, observedCurrentId=observed, message="Requested task ID changed", autoNext="not-run")
+            return fixed_mutation_result("complete", task_id, "conflict", "preflight", False, expectedCurrentId=task_id, observedCurrentId=observed, message="Requested task ID changed", autoNext="not-run")
         if target["isDone"]:
-            return mutation_result("complete", task_id, "conflict", "preflight", False, expectedCurrentId=task_id, observedCurrentId=observed, message="Task is already done", autoNext="not-run")
+            return fixed_mutation_result("complete", task_id, "conflict", "preflight", False, expectedCurrentId=task_id, observedCurrentId=observed, message="Task is already done", autoNext="not-run")
         if target["subTaskIds"]:
-            return mutation_result(
+            return fixed_mutation_result(
                 "complete", task_id, "conflict", "preflight", False,
                 expectedCurrentId=task_id, observedCurrentId=observed,
                 message="Task retains subtasks; complete the parent in Super Productivity",
@@ -1307,7 +1380,7 @@ def complete(
         except BridgeError as error:
             return mutation_result("complete", task_id, "failed", "preflight", False, expectedCurrentId=task_id, observedCurrentId=observed, message=str(error), autoNext="not-run")
         if dispatch_current != task_id:
-            return mutation_result(
+            return fixed_mutation_result(
                 "complete", task_id, "conflict", "preflight", False,
                 expectedCurrentId=task_id, observedCurrentId=dispatch_current,
                 finalCurrentId=dispatch_current, raceDetected=True,
@@ -1325,7 +1398,7 @@ def complete(
         except BridgeError as error:
             return mutation_result("complete", task_id, "unknown", "verify", True, expectedCurrentId=task_id, observedCurrentId=observed, message=str(error), autoNext="not-run")
         if verified["id"] != task_id or not verified["isDone"]:
-            return mutation_result("complete", task_id, "partial", "verify", True, expectedCurrentId=task_id, observedCurrentId=observed, raceDetected=True, message="Completion postcondition did not hold", autoNext="not-run")
+            return fixed_mutation_result("complete", task_id, "partial", "verify", True, expectedCurrentId=task_id, observedCurrentId=observed, raceDetected=True, message="Completion postcondition did not hold", autoNext="not-run")
         return _reconcile_completion(
             client, task_id, target["parentId"], candidate, auto_next, window_ms
         )
@@ -1336,16 +1409,16 @@ def extend(client: Client, task_id: str, minutes: Any) -> dict[str, Any]:
     try:
         task_id = validate_task_id(task_id)
     except BridgeError as error:
-        return mutation_result("extend", task_id if isinstance(task_id, str) else None, "failed", "validation", False, expectedCurrentId=task_id if isinstance(task_id, str) else None, message=str(error))
+        return fixed_mutation_result("extend", task_id if isinstance(task_id, str) else None, "failed", "validation", False, expectedCurrentId=task_id if isinstance(task_id, str) else None, message=str(error))
     if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 1440:
-        return mutation_result("extend", task_id, "failed", "validation", False, expectedCurrentId=task_id, message="Minutes must be a whole number from 1 to 1440")
+        return fixed_mutation_result("extend", task_id, "failed", "validation", False, expectedCurrentId=task_id, message="Minutes must be a whole number from 1 to 1440")
     with mutation_lock():
         try:
             observed = _current_id(client.request("GET", "/task-control/current"))
         except BridgeError as error:
             return mutation_result("extend", task_id, "failed", "preflight", False, expectedCurrentId=task_id, message=str(error))
         if observed != task_id:
-            return mutation_result("extend", task_id, "conflict", "preflight", False, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=observed, raceDetected=True, message="Current task changed")
+            return fixed_mutation_result("extend", task_id, "conflict", "preflight", False, expectedCurrentId=task_id, observedCurrentId=observed, finalCurrentId=observed, raceDetected=True, message="Current task changed")
         try:
             task = client.request("GET", _task_path(task_id))
         except BridgeError as error:
@@ -1353,7 +1426,7 @@ def extend(client: Client, task_id: str, minutes: Any) -> dict[str, Any]:
         old = task.get("timeEstimate") if isinstance(task, dict) else None
         intended = (old + minutes * 60_000) if isinstance(old, (int, float)) and _finite_nonnegative(old) else None
         if intended is None or intended > MAX_ESTIMATE_MS:
-            return mutation_result("extend", task_id, "failed", "validation", False, expectedCurrentId=task_id, observedCurrentId=observed, oldEstimate=old, intendedEstimate=intended, message="Estimate must be finite and at most 365 days")
+            return fixed_mutation_result("extend", task_id, "failed", "validation", False, expectedCurrentId=task_id, observedCurrentId=observed, oldEstimate=old, intendedEstimate=intended, message="Estimate must be finite and at most 365 days")
         try:
             written, rejection = _request_mutation(client, "PATCH", _task_path(task_id), {"timeEstimate": intended})
         except DispatchUnknown as error:
@@ -1367,17 +1440,21 @@ def extend(client: Client, task_id: str, minutes: Any) -> dict[str, Any]:
         except BridgeError as error:
             return mutation_result("extend", task_id, "unknown", "verify", True, expectedCurrentId=task_id, observedCurrentId=observed, oldEstimate=old, intendedEstimate=intended, writtenEstimate=written_estimate, finalEstimate=None, message=str(error))
         if final_estimate != intended:
-            return mutation_result("extend", task_id, "partial", "verify", True, expectedCurrentId=task_id, observedCurrentId=observed, oldEstimate=old, intendedEstimate=intended, writtenEstimate=written_estimate, finalEstimate=final_estimate, raceDetected=True, message="Estimate changed after write")
-        return mutation_result("extend", task_id, "succeeded", "done", True, expectedCurrentId=task_id, observedCurrentId=observed, oldEstimate=old, intendedEstimate=intended, writtenEstimate=written_estimate, finalEstimate=final_estimate, message="Task extended")
+            return fixed_mutation_result("extend", task_id, "partial", "verify", True, expectedCurrentId=task_id, observedCurrentId=observed, oldEstimate=old, intendedEstimate=intended, writtenEstimate=written_estimate, finalEstimate=final_estimate, raceDetected=True, message="Estimate changed after write")
+        return fixed_mutation_result("extend", task_id, "succeeded", "done", True, expectedCurrentId=task_id, observedCurrentId=observed, oldEstimate=old, intendedEstimate=intended, writtenEstimate=written_estimate, finalEstimate=final_estimate, message="Task extended")
 
 
-def _safe_alert_title(value: str) -> str:
+def _safe_notification_text(value: str, field: str) -> str:
+    if not isinstance(value, str):
+        raise BridgeError(f"{field} must be text")
     sanitized = "".join(
         " " if unicodedata.category(character) in {"Cc", "Cf"} else character
         for character in value
     )
     cleaned = " ".join(sanitized.split())
-    return (cleaned or "Task")[:MAX_ALERT_TITLE_LENGTH]
+    if not cleaned:
+        raise BridgeError(f"{field} must not be empty")
+    return cleaned[:MAX_ALERT_TITLE_LENGTH]
 
 
 def _side_effect(command: list[str], timeout: int = NOTIFICATION_TIMEOUT) -> dict[str, Any]:
@@ -1470,6 +1547,7 @@ def alert(
     sound_path: str | None = None,
     silent: bool = False,
     volume: int = 100,
+    notification_title: str = "Super Productivity",
 ) -> tuple[dict[str, Any], int]:
     urgency = validate_urgency(urgency)
     volume = validate_volume(volume)
@@ -1478,8 +1556,8 @@ def alert(
         f"--urgency={urgency}",
         "--icon=alarm-symbolic",
         "--",
-        "Super Productivity",
-        _safe_alert_title(title),
+        _safe_notification_text(notification_title, "Notification title"),
+        _safe_notification_text(title, "Notification body"),
     ])
     sound: dict[str, Any] = {"requested": not silent, "volume": volume, "ok": False}
     if not silent:
@@ -1496,11 +1574,16 @@ def alert(
     return {"ok": ok, "notification": notification, "sound": sound}, 0 if ok else 1
 
 
-def test_notification(urgency: str) -> tuple[dict[str, Any], int]:
+def test_notification(
+    urgency: str,
+    notification_title: str = "Super Productivity",
+    body: str = "Notification test",
+) -> tuple[dict[str, Any], int]:
     urgency = validate_urgency(urgency)
     result = _side_effect([
         "notify-send", f"--urgency={urgency}", "--icon=alarm-symbolic", "--",
-        "Super Productivity", "Notification test",
+        _safe_notification_text(notification_title, "Notification title"),
+        _safe_notification_text(body, "Notification body"),
     ])
     return {"ok": result["ok"], "notification": result}, 0 if result["ok"] else 1
 
@@ -1605,9 +1688,9 @@ def add(client: Client, shorthand: str, start_after: bool = False) -> dict[str, 
         try:
             created_id = validate_task_id(created.get("id") if isinstance(created, dict) else None)
         except BridgeError:
-            return mutation_result("add", None, "unknown", "verify", None, expectedCurrentId=before if start_after else None, message="Creation response did not contain a task ID", followupMutationApplied=None if start_after else None)
+            return fixed_mutation_result("add", None, "unknown", "verify", None, expectedCurrentId=before if start_after else None, message="Creation response did not contain a task ID", followupMutationApplied=None if start_after else None)
         if not start_after:
-            result = mutation_result("add", created_id, "succeeded", "done", True, createdTaskId=created_id, message="Task added")
+            result = fixed_mutation_result("add", created_id, "succeeded", "done", True, createdTaskId=created_id, message="Task added")
             result["task"] = created
             return result
         try:
@@ -1615,14 +1698,19 @@ def add(client: Client, shorthand: str, start_after: bool = False) -> dict[str, 
         except BridgeError as error:
             return mutation_result("add", created_id, "partial", "followup-preflight", True, expectedCurrentId=before, createdTaskId=created_id, followupMutationApplied=False, message=str(error))
         if observed != before:
-            return mutation_result("add", created_id, "partial", "followup-preflight", True, expectedCurrentId=before, observedCurrentId=observed, finalCurrentId=observed, createdTaskId=created_id, followupMutationApplied=False, raceDetected=True, message="Current task changed before switch")
+            return fixed_mutation_result("add", created_id, "partial", "followup-preflight", True, expectedCurrentId=before, observedCurrentId=observed, finalCurrentId=observed, createdTaskId=created_id, followupMutationApplied=False, raceDetected=True, message="Current task changed before switch")
         started = _start_unlocked(client, created_id, "add", before)
         if started["state"] == "succeeded":
-            started.update({"targetTaskId": created_id, "createdTaskId": created_id, "expectedCurrentId": before, "mutationApplied": True, "followupMutationApplied": True, "message": "Task added and started"})
+            started.update({"targetTaskId": created_id, "createdTaskId": created_id, "expectedCurrentId": before, "mutationApplied": True, "followupMutationApplied": True, "message": "Task added and started", "messageKey": "task-added-and-started"})
             return started
         followup = started["mutationApplied"]
         state = "unknown" if started["state"] == "unknown" else "partial"
-        return mutation_result("add", created_id, state, "followup-" + started["stage"] if started["stage"] != "done" else "followup-verify", True, expectedCurrentId=before, observedCurrentId=observed, finalCurrentId=started.get("finalCurrentId"), createdTaskId=created_id, followupMutationApplied=followup, raceDetected=started.get("raceDetected", False), message=started["message"])
+        result = mutation_result("add", created_id, state, "followup-" + started["stage"] if started["stage"] != "done" else "followup-verify", True, expectedCurrentId=before, observedCurrentId=observed, finalCurrentId=started.get("finalCurrentId"), createdTaskId=created_id, followupMutationApplied=followup, raceDetected=started.get("raceDetected", False), message=started["message"])
+        if "messageKey" in started:
+            result["messageKey"] = started["messageKey"]
+        if "messageArgs" in started:
+            result["messageArgs"] = started["messageArgs"]
+        return result
 
 
 def show() -> dict[str, Any]:
@@ -1649,7 +1737,7 @@ def show() -> dict[str, Any]:
 
 
 def run(argv: list[str]) -> tuple[dict[str, Any], int]:
-    usage = "Usage: superproductivity.py status|add <task> [--start]|start <id>|stop <id>|complete <id> [--auto-next [--auto-next-window MINUTES]]|complete-task <id>|extend <id> <minutes>|test-notification --urgency VALUE|preview-sound [--sound PATH] [--volume VALUE]|alert --urgency VALUE [--sound PATH|--silent] [--volume VALUE] -- TITLE|show"
+    usage = "Usage: superproductivity.py status|add <task> [--start]|start <id>|stop <id>|complete <id> [--auto-next [--auto-next-window MINUTES]]|complete-task <id>|extend <id> <minutes>|test-notification --urgency VALUE [--notification-title TEXT] [--body TEXT]|preview-sound [--sound PATH] [--volume VALUE]|alert --urgency VALUE [--sound PATH|--silent] [--volume VALUE] [--notification-title TEXT] -- TITLE|show"
     if not argv:
         raise BridgeError(usage)
     command = argv[0]
@@ -1694,8 +1782,32 @@ def run(argv: list[str]) -> tuple[dict[str, Any], int]:
         minutes: Any = int(argv[2]) if re.fullmatch(r"\d+", argv[2]) else argv[2]
         result = extend(Client(), argv[1], minutes)
         return result, 0 if result["state"] == "succeeded" else 1
-    if command == "test-notification" and len(argv) == 3 and argv[1] == "--urgency":
-        return test_notification(argv[2])
+    if command == "test-notification":
+        urgency = None
+        notification_title = None
+        body = None
+        index = 1
+        while index < len(argv):
+            option = argv[index]
+            has_value = index + 1 < len(argv) and argv[index + 1] not in NOTIFICATION_OPTION_TOKENS
+            if option == "--urgency" and urgency is None and has_value:
+                urgency = argv[index + 1]
+            elif option == "--notification-title" and notification_title is None and has_value:
+                notification_title = argv[index + 1]
+            elif option == "--body" and body is None and has_value:
+                body = argv[index + 1]
+            else:
+                raise BridgeError("Invalid test-notification arguments")
+            index += 2
+        if urgency is None:
+            raise BridgeError("Invalid test-notification arguments")
+        if notification_title is None and body is None:
+            return test_notification(urgency)
+        return test_notification(
+            urgency,
+            notification_title if notification_title is not None else "Super Productivity",
+            body if body is not None else "Notification test",
+        )
     if command == "preview-sound":
         sound_path = None
         volume = 100
@@ -1722,27 +1834,34 @@ def run(argv: list[str]) -> tuple[dict[str, Any], int]:
         silent = False
         volume = 100
         volume_seen = False
+        notification_title = None
         index = 0
         while index < len(options):
             option = options[index]
-            if option == "--urgency" and index + 1 < len(options) and urgency is None:
+            has_value = index + 1 < len(options) and options[index + 1] not in NOTIFICATION_OPTION_TOKENS
+            if option == "--urgency" and urgency is None and has_value:
                 urgency = options[index + 1]
                 index += 2
-            elif option == "--sound" and index + 1 < len(options) and sound_path is None and not silent:
+            elif option == "--sound" and sound_path is None and not silent and has_value:
                 sound_path = options[index + 1]
                 index += 2
             elif option == "--silent" and not silent and sound_path is None:
                 silent = True
                 index += 1
-            elif option == "--volume" and index + 1 < len(options) and not volume_seen:
+            elif option == "--volume" and not volume_seen and has_value:
                 volume = validate_volume(options[index + 1])
                 volume_seen = True
+                index += 2
+            elif option == "--notification-title" and notification_title is None and has_value:
+                notification_title = options[index + 1]
                 index += 2
             else:
                 raise BridgeError("Invalid alert arguments")
         if urgency is None or not title_parts:
             raise BridgeError("Invalid alert arguments")
-        return alert(" ".join(title_parts), urgency, sound_path, silent, volume)
+        if notification_title is None:
+            return alert(" ".join(title_parts), urgency, sound_path, silent, volume)
+        return alert(" ".join(title_parts), urgency, sound_path, silent, volume, notification_title)
     if command == "show" and len(argv) == 1:
         return show(), 0
     raise BridgeError(usage)

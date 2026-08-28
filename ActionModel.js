@@ -189,7 +189,8 @@ function takeNext(queue, now) {
       finalCurrentId: null,
       raceDetected: false,
       createdTaskId: null,
-      message: "Request expired in queue"
+      message: "Request expired in queue",
+      messageKey: "request-expired"
     }, null, current))
   }
   return { request: pending.length ? pending.shift() : null, queue: pending, expired: expired }
@@ -198,7 +199,11 @@ function takeNext(queue, now) {
 function normalizeResult(request, reply, exitCode, finishedAt) {
   var source = validResultReply(request, reply) ? reply : syntheticUnknown(request)
   var result = {}
-  Object.keys(source).forEach(function (key) { result[key] = source[key] })
+  Object.keys(source).forEach(function (key) {
+    Object.defineProperty(result, key, {
+      value: source[key], writable: true, enumerable: true, configurable: true
+    })
+  })
   result.requestId = String(request.id)
   result.kind = String(request.kind)
   result.ok = source.state === "succeeded"
@@ -213,12 +218,16 @@ function validResultReply(request, reply) {
   for (var index = 0; index < COMMON_RESULT_FIELDS.length; index++)
     if (!owns(reply, COMMON_RESULT_FIELDS[index])) return false
   if (typeof reply.kind !== "string" || reply.kind !== String(request.kind)
-      || !isNullableString(reply.targetTaskId) || !STATES[reply.state] || !STAGES[reply.stage]
+      || !isNullableString(reply.targetTaskId) || !owns(STATES, reply.state) || !owns(STAGES, reply.stage)
       || !isTriState(reply.mutationApplied) || !isNullableString(reply.expectedCurrentId)
       || !isNullableString(reply.observedCurrentId) || !isNullableString(reply.finalCurrentId)
       || typeof reply.raceDetected !== "boolean" || !isNullableString(reply.createdTaskId)
       || typeof reply.message !== "string")
     return false
+  if (owns(reply, "messageKey") && (typeof reply.messageKey !== "string"
+      || reply.messageKey.length === 0 || hasUnicodeControl(reply.messageKey))) return false
+  if (owns(reply, "messageArgs") && !isRecord(reply.messageArgs)) return false
+  if (owns(reply, "messageArgs") && !owns(reply, "messageKey")) return false
   if (owns(reply, "followupMutationApplied") && !isTriState(reply.followupMutationApplied)) return false
   if (reply.state === "succeeded" || reply.state === "partial") return reply.mutationApplied === true
   if (reply.state === "conflict" || reply.state === "failed") return reply.mutationApplied === false
@@ -244,7 +253,8 @@ function syntheticUnknown(request) {
     finalCurrentId: null,
     raceDetected: false,
     createdTaskId: null,
-    message: "Super Productivity returned an invalid action result"
+    message: "Super Productivity returned an invalid action result",
+    messageKey: "invalid-action-result"
   }
 }
 
@@ -332,8 +342,8 @@ function mergeStatus(previous, incoming) {
   if (context.todayOk !== false && context.tasksOk === false)
     nextTasks = hydratePreviousChildren(nextTasks, oldTasks)
   if (context.projectsOk === false) {
-    var byId = {}
-    var byProject = {}
+    var byId = Object.create(null)
+    var byProject = Object.create(null)
     oldTasks.concat(old.currentTask ? [old.currentTask] : []).forEach(function (task) {
       if (!task) return
       if (task.id != null) byId[String(task.id)] = task

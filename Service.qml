@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import "Model.js" as Model
 import "ActionModel.js" as Actions
+import "I18n.js" as I18n
 
 Item {
   id: root
@@ -15,11 +16,15 @@ Item {
     ? String(manifest.__sourceDir)
     : (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/" + pluginId
   readonly property string helperPath: pluginDir + "/backend/superproductivity.py"
+  readonly property string localeName: I18n.resolveLocale(Qt.locale().name)
 
   property var snapshot: ({ ok: true, currentTask: null, todayTasks: [] })
   property string errorText: ""
+  property string ipcErrorText: ""
   property string contextWarning: ""
+  property string contextWarningText: ""
   property string alertError: ""
+  property string ipcAlertError: ""
   property bool refreshing: false
   readonly property bool todayRefreshing: refreshing
   property bool refreshPending: false
@@ -54,11 +59,13 @@ Item {
   property bool testNotificationBusy: false
   property string testNotificationState: "idle"
   property string testNotificationMessage: ""
+  property string ipcTestNotificationMessage: ""
   property var testReply: null
   property var previewQueue: []
   readonly property bool previewBusy: previewProcess.running || previewQueue.length > 0
   property string previewState: "idle"
   property string previewMessage: ""
+  property string ipcPreviewMessage: ""
   property var previewReply: null
 
   property var alertReply: null
@@ -75,7 +82,7 @@ Item {
     ? Model.nextScheduledTask(todayTasks, clockMs) : null
   readonly property double nextScheduledStartMs: nextScheduledTask ? Number(nextScheduledTask.dueWithTime) : 0
   readonly property string nextScheduledTitle: nextScheduledTask
-    ? String(nextScheduledTask.title || nextScheduledTask.name || "Untitled task") : ""
+    ? String(nextScheduledTask.title || nextScheduledTask.name || tr("common.untitledTask")) : ""
   readonly property real estimateMs: currentTask ? numberField(currentTask, "timeEstimate", 0) : 0
   readonly property real spentMs: currentTask ? numberField(currentTask, "timeSpent", 0) : 0
   readonly property real signedRemainingMs: currentTask
@@ -96,6 +103,24 @@ Item {
     setting("quickAddSwitch", undefined), setting("quickAddEnterAction", ""))
   readonly property bool startAfterAddDefault: quickAddSwitch
   readonly property string notificationUrgency: urgencySetting()
+
+  function tr(key, args) {
+    return I18n.translate(localeName, key, args || {})
+  }
+
+  function warningDisplay(codes) {
+    return I18n.joinSentences(codes.map(function(code) { return I18n.warningText(localeName, code) }))
+  }
+
+  function setError(key, args) {
+    errorText = key ? tr(key, args) : ""
+    ipcErrorText = key ? I18n.translate("en", key, args || {}) : ""
+  }
+
+  function setPreviewMessage(key) {
+    previewMessage = key ? tr(key) : ""
+    ipcPreviewMessage = key ? I18n.translate("en", key) : ""
+  }
 
   function numberField(object, key, fallback) {
     var number = object ? Number(object[key]) : NaN
@@ -219,13 +244,14 @@ Item {
       var warnings = normalized.context && Array.isArray(normalized.context.warnings)
         ? normalized.context.warnings : []
       contextWarning = warnings.join(", ")
-      errorText = ""
+      contextWarningText = warningDisplay(warnings)
+      setError("")
       if (transition.shouldAlert) attemptAlert(normalized.currentTask, "timer")
       if (schedule.alerts.length > 0)
-        attemptAlert({ title: "Scheduled now: " + String(schedule.alerts[0].title || "Untitled task") }, "scheduled")
+        attemptAlert({ title: tr("notification.scheduledNow", { title: String(schedule.alerts[0].title || tr("common.untitledTask")) }) }, "scheduled")
       return true
     } catch (error) {
-      errorText = "Super Productivity status did not match the expected format"
+      setError("service.invalidStatus")
       return false
     }
   }
@@ -250,8 +276,8 @@ Item {
     refreshing = false
     var stale = statusProcess.launchEpoch !== mutationEpoch || mutationBusy
     if (!stale) {
-      if (code !== 0) errorText = "Super Productivity status failed (exit " + code + ")"
-      else if (!statusReply) errorText = "Super Productivity returned unreadable status"
+      if (code !== 0) setError("service.statusFailed", { exitCode: code })
+      else if (!statusReply) setError("service.unreadableStatus")
       else applyStatus(statusReply)
     }
     if (refreshPending && !mutationBusy) Qt.callLater(refresh)
@@ -349,7 +375,8 @@ Item {
       state: "failed", stage: "dispatch", mutationApplied: false,
       expectedCurrentId: null, observedCurrentId: null, finalCurrentId: null,
       raceDetected: false, createdTaskId: null,
-      message: "Super Productivity helper could not be started"
+      message: "Super Productivity helper could not be started",
+      messageKey: "helper-start-failed"
     }
     var result = Actions.normalizeResult(completed, reply, code, Date.now())
     currentAction = null
@@ -377,9 +404,14 @@ Item {
     testNotificationBusy = true
     testNotificationState = "running"
     testNotificationMessage = ""
+    ipcTestNotificationMessage = ""
     testReply = null
     testProcess.completed = false
-    testProcess.command = [helperPath, "test-notification", "--urgency", notificationUrgency]
+    testProcess.command = [
+      helperPath, "test-notification", "--urgency", notificationUrgency,
+      "--notification-title", tr("notification.title"),
+      "--body", tr("notification.testBody")
+    ]
     testProcess.running = true
     return { accepted: true }
   }
@@ -389,10 +421,16 @@ Item {
     testProcess.completed = true
     testNotificationBusy = false
     testNotificationState = launchFailed ? "failed" : Model.sideEffectState(code, testReply)
-    testNotificationMessage = launchFailed
-      ? "Super Productivity helper could not be started"
-      : String(testReply && (testReply.message || testReply.error)
-               || (code === 0 ? "Notification sent" : "Notification test failed"))
+    var diagnostic = testReply && (testReply.message || testReply.error)
+    if (diagnostic) {
+      testNotificationMessage = String(diagnostic)
+      ipcTestNotificationMessage = String(diagnostic)
+    } else {
+      var key = launchFailed ? "service.helperStartFailed"
+                             : (code === 0 ? "notification.sent" : "notification.testFailed")
+      testNotificationMessage = tr(key)
+      ipcTestNotificationMessage = I18n.translate("en", key)
+    }
   }
 
   function previewSound(volume) {
@@ -400,7 +438,7 @@ Item {
     if (!parsed.ok) return { accepted: false, error: parsed.error }
     previewQueue = previewQueue.concat([parsed.value])
     previewState = "running"
-    previewMessage = ""
+    setPreviewMessage("")
     previewReply = null
     drainPreviews()
     return { accepted: true }
@@ -411,7 +449,7 @@ Item {
     var volume = previewQueue[0]
     previewQueue = previewQueue.slice(1)
     previewReply = null
-    previewMessage = ""
+    setPreviewMessage("")
     previewState = "running"
     previewProcess.completed = false
     var args = [helperPath, "preview-sound"]
@@ -424,7 +462,7 @@ Item {
   function attemptAlert(task, kind) {
     if (!alertEnabled) return
     alertQueue = Model.enqueueAlert(alertQueue, {
-      title: String(task && (task.title || task.name) || "Task time expired"),
+      title: String(task && (task.title || task.name) || tr("notification.timerExpired")),
       kind: kind || "timer",
       queuedAt: Date.now()
     }, 16)
@@ -432,7 +470,7 @@ Item {
     previewQueue = []
     if (cancelledPreview) {
       previewState = "failed"
-      previewMessage = "Sound preview cancelled by task alert"
+      setPreviewMessage("sound.previewCancelled")
     }
     if (previewProcess.running) {
       alertWaitingForPreview = true
@@ -453,6 +491,7 @@ Item {
     args.push("--volume", String(alertVolume))
     if (!soundEnabled) args.push("--silent")
     else if (soundPath !== "") args.push("--sound", soundPath)
+    args.push("--notification-title", tr("notification.title"))
     args.push("--", currentAlert.title)
     alertReply = null
     alertProcess.command = args
@@ -461,9 +500,18 @@ Item {
 
   function finishAlert(code) {
     if (!currentAlert) return
-    if (code !== 0 || !alertReply || alertReply.ok === false)
-      alertError = String(alertReply && (alertReply.error || alertReply.message) || "Super Productivity alert failed (exit " + code + ")")
-    else alertError = ""
+    if (code !== 0 || !alertReply || alertReply.ok === false) {
+      if (alertReply && (alertReply.error || alertReply.message)) {
+        alertError = String(alertReply.error || alertReply.message)
+        ipcAlertError = alertError
+      } else {
+        alertError = tr("service.alertFailed", { exitCode: code })
+        ipcAlertError = I18n.translate("en", "service.alertFailed", { exitCode: code })
+      }
+    } else {
+      alertError = ""
+      ipcAlertError = ""
+    }
     currentAlert = null
     Qt.callLater(drainAlerts)
   }
@@ -509,7 +557,7 @@ Item {
       previewProcess.completed = true
       previewProcess.signal(9)
       root.previewState = "failed"
-      root.previewMessage = "Sound preview cleanup timed out"
+      root.setPreviewMessage("sound.previewCleanupTimeout")
       root.alertWaitingForPreview = false
       root.drainAlerts()
     }
@@ -527,7 +575,7 @@ Item {
     onRunningChanged: {
       if (running) launched = false
       else if (!launched && !completed) {
-        root.errorText = "Super Productivity helper could not be started"
+        root.setError("service.helperStartFailed")
         root.finishStatus(-1)
       }
     }
@@ -560,13 +608,17 @@ Item {
       if (running) launched = false
       else if (!launched && root.showBusy) {
         root.showBusy = false
-        root.showMessage = "Super Productivity helper could not be started"
+        root.showMessage = root.tr("service.helperStartFailed")
       }
     }
     onExited: function(code) {
       root.showBusy = false
-      root.showMessage = String(root.showReply && (root.showReply.message || root.showReply.error)
-                                || (code === 0 ? "Super Productivity opened" : "Could not open Super Productivity"))
+      var diagnostic = root.showReply && (root.showReply.message || root.showReply.error)
+      var opened = I18n.translate("en", "service.opened")
+      var openFailed = I18n.translate("en", "service.openFailed")
+      root.showMessage = diagnostic === opened ? root.tr("service.opened")
+        : (diagnostic === openFailed ? root.tr("service.openFailed")
+        : (diagnostic ? String(diagnostic) : root.tr(code === 0 ? "service.opened" : "service.openFailed")))
     }
   }
 
@@ -599,7 +651,8 @@ Item {
       else if (!launched && command.length > 0 && !completed) {
         completed = true
         root.previewState = "failed"
-        root.previewMessage = "Super Productivity helper could not be started"
+        root.previewMessage = root.tr("service.helperStartFailed")
+        root.ipcPreviewMessage = I18n.translate("en", "service.helperStartFailed")
         if (root.alertWaitingForPreview) {
           previewStopFallback.stop()
           root.alertWaitingForPreview = false
@@ -612,11 +665,14 @@ Item {
       completed = true
       if (root.alertWaitingForPreview) {
         root.previewState = "failed"
-        if (!root.previewMessage) root.previewMessage = "Sound preview cancelled by task alert"
+        if (!root.previewMessage) root.setPreviewMessage("sound.previewCancelled")
       } else {
         root.previewState = Model.sideEffectState(code, root.previewReply)
-        root.previewMessage = String(root.previewReply && (root.previewReply.message || root.previewReply.error)
-                                     || (code === 0 ? "Sound preview finished" : "Sound preview failed"))
+        var diagnostic = root.previewReply && (root.previewReply.message || root.previewReply.error)
+        if (diagnostic) {
+          root.previewMessage = String(diagnostic)
+          root.ipcPreviewMessage = String(diagnostic)
+        } else root.setPreviewMessage(code === 0 ? "sound.previewFinished" : "sound.previewFailed")
       }
       if (root.alertWaitingForPreview) {
         previewStopFallback.stop()
@@ -659,9 +715,9 @@ Item {
     function status(): string {
       return JSON.stringify({
         refreshing: root.refreshing,
-        error: root.errorText,
+        error: root.ipcErrorText,
         contextWarning: root.contextWarning,
-        alertError: root.alertError,
+        alertError: root.ipcAlertError,
         alertVolume: root.alertVolume,
         autoNextWindowMinutes: root.autoNextWindowMinutes,
         task: root.currentTask,
@@ -682,10 +738,10 @@ Item {
         } : null,
         previewBusy: root.previewBusy,
         previewState: root.previewState,
-        previewMessage: root.previewMessage,
+        previewMessage: root.ipcPreviewMessage,
         testNotificationBusy: root.testNotificationBusy,
         testNotificationState: root.testNotificationState,
-        testNotificationMessage: root.testNotificationMessage
+        testNotificationMessage: root.ipcTestNotificationMessage
       })
     }
   }

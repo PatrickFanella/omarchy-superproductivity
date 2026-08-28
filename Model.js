@@ -199,8 +199,10 @@ function advanceExpiry(state, task, authoritativeRemaining) {
   return { state: next, shouldAlert: false, expired: false }
 }
 
-function displayTitle(task, maximum) {
-  var title = String(task && (task.title || task.name) || "Untitled task").replace(/\s+/g, " ").trim()
+function displayTitle(task, maximum, fallback) {
+  var title = String(task && (task.title || task.name) || "").replace(/\s+/g, " ").trim()
+  if (title === "") title = String(fallback === undefined || fallback === null ? "Untitled task" : fallback)
+    .replace(/\s+/g, " ").trim()
   var limit = Math.max(1, Math.floor(finiteNumber(maximum, 60)))
   if (title.length <= limit) return title
   if (limit === 1) return "…"
@@ -312,8 +314,8 @@ function searchHierarchy(tasks, query) {
   })
 }
 
-function barLabel(task, remainingMs) {
-  return "󰄬  " + displayTitle(task, 52) + "  " + formatRemaining(remainingMs)
+function barLabel(task, remainingMs, fallback) {
+  return "󰄬  " + displayTitle(task, 52, fallback) + "  " + formatRemaining(remainingMs)
 }
 
 if (typeof module !== "undefined") {

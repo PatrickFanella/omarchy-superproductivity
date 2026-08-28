@@ -132,7 +132,11 @@ test("runnable order skips retained containers without visible runnable children
 test("shortens plain titles and builds bar label", () => {
   assert.equal(Model.displayTitle({ title: "  A   long title  " }, 8), "A long…")
   assert.equal(Model.displayTitle(null, 20), "Untitled task")
+  assert.equal(Model.displayTitle({ title: "" }, 20, "Unbenannte Aufgabe"), "Unbenannte Aufgabe")
+  assert.equal(Model.displayTitle({ title: " \t\n " }, 20, "Tâche sans titre"), "Tâche sans titre")
+  assert.equal(Model.displayTitle(null, 8, "Tarea sin título"), "Tarea s…")
   assert.match(Model.barLabel({ title: "Focus" }, 300000), /Focus  5:00$/)
+  assert.match(Model.barLabel({ title: "   " }, 300000, "未命名任务"), /未命名任务  5:00$/)
 })
 
 const idle = { taskId: null, phase: "idle", positiveCount: 0 }

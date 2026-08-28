@@ -124,6 +124,54 @@ test("structured partial and unknown outcomes survive normalization", () => {
   assert.equal(unknown.raceDetected, false)
   assert.equal(unknown.createdTaskId, null)
   assert.equal(unknown.message, "Super Productivity returned an invalid action result")
+  assert.equal(unknown.messageKey, "invalid-action-result")
+})
+
+test("optional semantic message metadata survives only when valid", () => {
+  const semantic = Actions.normalizeResult(request("semantic"), reply({
+    messageKey: "task-started", messageArgs: { title: "Task" }
+  }), 0, 1)
+  assert.equal(semantic.message, "Started")
+  assert.equal(semantic.messageKey, "task-started")
+  assert.deepEqual(semantic.messageArgs, { title: "Task" })
+
+  for (const metadata of [
+    { messageKey: "" }, { messageKey: 1 }, { messageKey: "bad\nkey" },
+    { messageArgs: [] }, { messageArgs: "bad" }, { messageArgs: { title: "Task" } }
+  ]) {
+    const result = Actions.normalizeResult(request("invalid-metadata"), reply(metadata), 1, 2)
+    assert.equal(result.state, "unknown")
+    assert.equal(result.messageKey, "invalid-action-result")
+  }
+})
+
+test("queue expiry has semantic metadata without changing English message", () => {
+  const expired = Actions.takeNext([request("old", 0)], 30001).expired[0]
+  assert.equal(expired.message, "Request expired in queue")
+  assert.equal(expired.messageKey, "request-expired")
+})
+
+test("fixed backend semantic outcomes survive normalization", () => {
+  const cases = [
+    ["Malformed requested task", "malformed-requested-task"],
+    ["Malformed child state", "malformed-child-state"],
+    ["Task completed and next task started", "task-completed-and-next-started"],
+    ["Task added and started", "task-added-and-started"]
+  ]
+  for (const [message, messageKey] of cases) {
+    const result = Actions.normalizeResult(request(messageKey), reply({ message, messageKey }), 0, 1)
+    assert.equal(result.message, message)
+    assert.equal(result.messageKey, messageKey)
+  }
+})
+
+test("raw upstream diagnostics remain valid without semantic metadata", () => {
+  const result = Actions.normalizeResult(request("raw"), reply({
+    state: "failed", stage: "dispatch", mutationApplied: false,
+    message: "Task started"
+  }), 1, 2)
+  assert.equal(result.message, "Task started")
+  assert.equal(Object.hasOwn(result, "messageKey"), false)
 })
 
 test("primary verify-unknown backend outcome survives normalization", () => {
@@ -140,6 +188,7 @@ test("primary verify-unknown backend outcome survives normalization", () => {
     raceDetected: true,
     createdTaskId: null,
     message: "Unexpected current task",
+    messageKey: "unexpected-current-task",
     actualTaskId: "task"
   }
   const result = Actions.normalizeResult(request("verify"), backendReply, 1, 60)
@@ -151,6 +200,7 @@ test("primary verify-unknown backend outcome survives normalization", () => {
   assert.equal(result.raceDetected, true)
   assert.equal(result.actualTaskId, "task")
   assert.equal(result.message, "Unexpected current task")
+  assert.equal(result.messageKey, "unexpected-current-task")
 })
 
 test("add-and-switch followup verify-unknown backend outcome survives normalization", () => {
@@ -168,6 +218,7 @@ test("add-and-switch followup verify-unknown backend outcome survives normalizat
     raceDetected: true,
     createdTaskId: "created",
     message: "Unexpected current task",
+    messageKey: "unexpected-current-task",
     followupMutationApplied: true
   }
 
@@ -216,6 +267,24 @@ test("normalization accepts only declared states, stages, and outcome combinatio
     assert.equal(result.state, "unknown")
     assert.equal(result.message, "Super Productivity returned an invalid action result")
   }
+})
+
+test("normalization rejects inherited state and stage names", () => {
+  for (const source of [reply({ state: "constructor" }), reply({ stage: "toString" })]) {
+    const result = Actions.normalizeResult(request("inherited-enum"), source, 1, 2)
+    assert.equal(result.state, "unknown")
+    assert.equal(result.messageKey, "invalid-action-result")
+  }
+})
+
+test("normalization safely preserves an own __proto__ result field", () => {
+  const source = JSON.parse(JSON.stringify(reply()).replace(/}$/, ',"__proto__":{"injected":true}}'))
+  const result = Actions.normalizeResult(request("prototype-metadata"), source, 0, 2)
+
+  assert.equal(Object.getPrototypeOf(result), Object.prototype)
+  assert.equal(Object.hasOwn(result, "__proto__"), true)
+  assert.deepEqual(result.__proto__, { injected: true })
+  assert.equal(result.injected, undefined)
 })
 
 test("normalization rejects replies missing any common field", () => {
@@ -369,6 +438,21 @@ test("status merge preserves failed Today and project context", () => {
     context: { todayOk: true, projectsOk: false }
   })
   assert.equal(freshToday.todayTasks[0].projectTitle, "Work")
+})
+
+test("status merge restores a project whose ID is __proto__", () => {
+  const previous = {
+    currentTask: null,
+    todayTasks: [{ id: "old", projectId: "__proto__", projectTitle: "Reserved project" }]
+  }
+  const merged = Actions.mergeStatus(previous, {
+    currentTask: { id: "current", projectId: "__proto__", projectTitle: null },
+    todayTasks: [{ id: "fresh", projectId: "__proto__", projectTitle: null }],
+    context: { todayOk: true, projectsOk: false, tasksOk: true }
+  })
+
+  assert.equal(merged.currentTask.projectTitle, "Reserved project")
+  assert.equal(merged.todayTasks[0].projectTitle, "Reserved project")
 })
 
 test("status merge restores only authorized prior children when bulk context fails", () => {

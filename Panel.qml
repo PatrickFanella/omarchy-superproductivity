@@ -3,6 +3,7 @@ import QtQuick.Controls
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "I18n.js" as I18n
 
 Panel {
   id: root
@@ -46,16 +47,23 @@ Panel {
   property var addRequestModes: []
 
   readonly property var task: engine ? engine.currentTask : null
+  readonly property string localeName: engine && engine.localeName
+    ? engine.localeName : I18n.resolveLocale(Qt.locale().name)
+  readonly property var formattingLocale: Qt.locale()
   readonly property var nextScheduledTask: engine ? engine.nextScheduledTask : null
   readonly property real nextScheduledStartMs: engine && isFinite(Number(engine.nextScheduledStartMs))
     ? Number(engine.nextScheduledStartMs) : 0
-  readonly property string nextScheduledTitle: String(engine && engine.nextScheduledTitle
-    || nextScheduledTask && (nextScheduledTask.title || nextScheduledTask.name)
-    || "Untitled task").replace(/\s+/g, " ").trim()
+  readonly property string nextScheduledTitle: Model.displayTitle({
+    title: engine && engine.nextScheduledTitle
+      || nextScheduledTask && (nextScheduledTask.title || nextScheduledTask.name)
+  }, 1000, tr("common.untitledTask"))
   readonly property bool hasNextScheduled: !task && errorText === ""
     && !!nextScheduledTask && nextScheduledStartMs > 0
   readonly property string nextScheduledTime: hasNextScheduled
-    ? Model.formatStartTime(nextScheduledStartMs) : ""
+    ? formattingLocale.toString(
+        new Date(nextScheduledStartMs),
+        formattingLocale.timeFormat(Locale.ShortFormat))
+    : ""
   readonly property real signedRemainingMs: engine ? engine.signedRemainingMs : 0
   readonly property real remainingMs: engine ? engine.remainingMs : 0
   readonly property real overtimeMs: engine ? engine.overtimeMs : 0
@@ -65,8 +73,8 @@ Panel {
   readonly property bool taskOverdue: !!task && estimateMs > 0 && timerExpired
   readonly property bool mutationBusy: engine ? engine.mutationBusy === true : false
   readonly property string mutationTaskId: engine ? String(engine.mutationTaskId || "") : ""
-  readonly property string errorText: engine ? String(engine.errorText || "") : "Super Productivity service is not loaded"
-  readonly property string contextWarning: engine ? String(engine.contextWarning || "") : ""
+  readonly property string errorText: engine ? String(engine.errorText || "") : tr("service.notLoaded")
+  readonly property string contextWarning: engine ? warningDisplay(engine.contextWarning || "") : ""
   readonly property string alertError: engine ? String(engine.alertError || "") : ""
   readonly property bool refreshing: engine ? engine.refreshing === true : false
   readonly property var todayTasks: unfinishedTasks(engine ? engine.todayTasks : [])
@@ -98,6 +106,20 @@ Panel {
     || searchField.activeFocus
     || goTopButton.activeFocus
     || todayControlFocused()
+
+  function tr(key, args) { return I18n.translate(localeName, key, args || {}) }
+  function stateDisplay(state) { return I18n.stateText(localeName, state) }
+  function stageDisplay(stage) { return I18n.stageText(localeName, stage) }
+  function kindDisplay(kind) { return I18n.kindText(localeName, kind) }
+  function requestErrorDisplay(error) { return I18n.requestErrorText(localeName, error) }
+
+  function warningDisplay(value) {
+    var source = String(value || "")
+    if (source === "") return ""
+    return I18n.joinSentences(source.split(/\s*,\s*/).map(function(code) {
+      return I18n.warningText(localeName, code)
+    }))
+  }
 
   function taskId(value) {
     return String(value && value.id !== undefined && value.id !== null ? value.id : "")
@@ -196,16 +218,26 @@ Panel {
   }
 
   function titleFor(value) {
-    var title = Model.displayTitle(value, 100)
+    var title = Model.displayTitle(value, 100, tr("common.untitledTask"))
     var parent = String(value && value.parentTitle || "").trim()
     return taskDepth(value) === 1 && parent !== "" ? parent + " › " + title : title
   }
 
   function scheduledText(value) {
     var stamp = Number(value && value.dueWithTime)
-    if (isFinite(stamp) && stamp > 0) return Qt.formatDateTime(new Date(stamp), "ddd h:mm AP")
+    if (isFinite(stamp) && stamp > 0) return formattingLocale.toString(new Date(stamp), Locale.ShortFormat)
     var day = String(value && value.dueDay || "")
-    return day !== "" ? "Due " + day : ""
+    if (day === "") return ""
+    var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day)
+    if (!match) return tr("panel.schedule.due", { day: day })
+    var localDate = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    if (localDate.getFullYear() !== Number(match[1])
+        || localDate.getMonth() !== Number(match[2]) - 1
+        || localDate.getDate() !== Number(match[3]))
+      return tr("panel.schedule.due", { day: day })
+    return tr("panel.schedule.due", {
+      day: formattingLocale.toString(localDate, formattingLocale.dateFormat(Locale.ShortFormat))
+    })
   }
 
   function contextText(value) {
@@ -215,6 +247,18 @@ Panel {
     if (project !== "") parts.push(project)
     if (schedule !== "") parts.push(schedule)
     return parts.join(" · ")
+  }
+
+  function taskRowAccessibleName(value, current, pending, parent, expanded) {
+    var key = parent
+      ? (expanded ? "panel.today.rowExpanded" : "panel.today.rowCollapsed")
+      : "panel.today.rowTask"
+    return tr(key, {
+      title: Model.displayTitle(value, 120, tr("common.untitledTask")),
+      clock: taskClock(value, current),
+      context: contextText(value) ? tr("panel.today.contextSuffix", { context: contextText(value) }) : "",
+      status: current ? tr("panel.today.currentSuffix") : (pending ? tr("panel.today.pendingSuffix") : "")
+    })
   }
 
   function taskSignedRemaining(value, current) {
@@ -235,9 +279,11 @@ Panel {
   }
 
   function taskClock(value, current) {
-    if (taskEstimate(value, current) <= 0) return "No estimate"
+    if (taskEstimate(value, current) <= 0) return tr("common.noEstimate")
     var remaining = taskSignedRemaining(value, current)
-    return remaining <= 0 ? Model.formatOvertime(-remaining) + " over" : Model.formatRemaining(remaining) + " left"
+    return remaining <= 0
+      ? tr("panel.clock.over", { duration: Model.formatOvertime(-remaining) })
+      : tr("panel.clock.left", { duration: Model.formatRemaining(remaining) })
   }
 
   function rememberAddMode(requestId, startAfter) {
@@ -273,9 +319,11 @@ Panel {
   }
 
   function resultMessage(result, message) {
-    var text = String(message || result && result.message || "")
+    var text = I18n.resultText(localeName, result)
+    if (text === "") text = String(message || result && result.message || "")
     var stage = String(result && result.stage || "")
-    return stage !== "" && stage !== "done" ? text + " · " + stage : text
+    return stage !== "" && stage !== "done"
+      ? tr("panel.feedback.withStage", { message: text, stage: stageDisplay(stage) }) : text
   }
 
   function setting(key, fallback) {
@@ -296,7 +344,7 @@ Panel {
     if (!bar || !bar.shell || !bar.shell.pluginRegistry
         || typeof bar.shell.pluginRegistry.setBarWidget !== "function") {
       settingsState = "failed"
-      settingsMessage = "Plugin settings are unavailable"
+      settingsMessage = tr("panel.settings.unavailable")
       return false
     }
     try {
@@ -307,7 +355,7 @@ Panel {
         return false
       }
       settingsState = "succeeded"
-      settingsMessage = (label || key) + " saved"
+      settingsMessage = tr("panel.settings.saved", { label: label || key })
       return true
     } catch (error) {
       settingsState = "failed"
@@ -318,7 +366,7 @@ Panel {
 
   function rejection(error) {
     var value = String(error || "request-rejected")
-    return "Request rejected: " + value.replace(/-/g, " ")
+    return tr("panel.request.rejected", { error: requestErrorDisplay(value) })
   }
 
   function acceptMutation(kind, targetId, request) {
@@ -330,20 +378,20 @@ Panel {
     }
     mutationRequestId = String(request.requestId || "")
     mutationState = "running"
-    mutationMessage = kind + " queued"
+    mutationMessage = tr("panel.mutation.queued", { kind: kindDisplay(kind) })
     return true
   }
 
   function stopCurrent() {
     if (!engine || mutationBusy || !task) return
     var capturedId = taskId(task)
-    acceptMutation("Stop", capturedId, engine.stopTask(capturedId))
+    acceptMutation("stop", capturedId, engine.stopTask(capturedId))
   }
 
   function completeCurrent() {
     if (!engine || mutationBusy || !task || hasRetainedChildren(task)) return
     var capturedId = taskId(task)
-    acceptMutation("Complete", capturedId, engine.completeTask(capturedId))
+    acceptMutation("complete", capturedId, engine.completeTask(capturedId))
   }
 
   function extendCurrent(minutes) {
@@ -351,11 +399,11 @@ Panel {
     var text = String(minutes || "").trim()
     if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > 1440) {
       mutationState = "failed"
-      mutationMessage = "Extension must be a whole number from 1 to 1440 minutes"
+      mutationMessage = tr("panel.validation.extensionMinutes")
       return
     }
     var capturedId = taskId(task)
-    if (acceptMutation("Extend", capturedId, engine.extendTask(capturedId, text))) customMinutes.clear()
+    if (acceptMutation("extend", capturedId, engine.extendTask(capturedId, text))) customMinutes.clear()
   }
 
   function startTodayTask(value) {
@@ -370,9 +418,9 @@ Panel {
     }
     mutationRequestId = String(request.requestId || "")
     mutationState = "running"
-    mutationMessage = "Start queued"
+    mutationMessage = tr("panel.mutation.queued", { kind: kindDisplay("start") })
     todayState = "running"
-    todayMessage = "Starting " + Model.displayTitle(value, 80)
+    todayMessage = tr("panel.mutation.starting", { title: Model.displayTitle(value, 80, tr("common.untitledTask")) })
   }
 
   function rowIndexForTaskId(id) {
@@ -388,7 +436,7 @@ Panel {
   function rememberCompletionFocus(value) {
     var index = rowIndexForTaskId(taskId(value))
     completionTaskId = taskId(value)
-    completionTaskTitle = Model.displayTitle(value, 80)
+    completionTaskTitle = Model.displayTitle(value, 80, tr("common.untitledTask"))
     completionNextTaskId = ""
     completionPreviousTaskId = ""
     if (index >= 0) {
@@ -408,7 +456,7 @@ Panel {
     var request = capturedId === taskId(task)
       ? engine.completeTask(capturedId)
       : engine.completeListedTask(capturedId)
-    if (!acceptMutation("Complete", capturedId, request)) {
+    if (!acceptMutation("complete", capturedId, request)) {
       completionFocusPending = false
       todayState = "failed"
       todayMessage = mutationMessage
@@ -416,12 +464,12 @@ Panel {
     }
     completionRequestId = mutationRequestId
     todayState = "running"
-    todayMessage = "Completing " + completionTaskTitle
+    todayMessage = tr("panel.mutation.completing", { title: completionTaskTitle })
   }
 
   function warnParentCompletion() {
     todayState = "conflict"
-    todayMessage = "Complete subtasks first; Super Productivity manages the parent."
+    todayMessage = tr("panel.task.completeSubtasksFirst")
   }
 
   function submitAdd(startAfter) {
@@ -429,7 +477,7 @@ Panel {
     var value = String(addField.text || "").trim()
     if (value === "") {
       addState = "failed"
-      addMessage = "Type a task first"
+      addMessage = tr("panel.add.typeTaskFirst")
       return
     }
     var request = engine.add(value, startAfter)
@@ -442,20 +490,20 @@ Panel {
     addRequestId = String(request.requestId || "")
     rememberAddMode(addRequestId, startAfter)
     addState = "running"
-    addMessage = startAfter ? "Creating, then switching once" : "Creating task once"
+    addMessage = startAfter ? tr("panel.add.creatingThenSwitching") : tr("panel.add.creating")
   }
 
   function toggleQuickAddSwitch() {
     var previous = quickAddSwitchValue
     quickAddSwitchValue = !previous
-    if (!persistSetting("quickAddSwitch", quickAddSwitchValue, "Add & switch")) {
+    if (!persistSetting("quickAddSwitch", quickAddSwitchValue, tr("panel.quickAdd.switch"))) {
       quickAddSwitchValue = previous
       addState = "failed"
       addMessage = settingsMessage
       return
     }
     addState = "succeeded"
-    addMessage = quickAddSwitchValue ? "Add & switch enabled" : "Add & switch disabled"
+    addMessage = quickAddSwitchValue ? tr("panel.add.switchEnabled") : tr("panel.add.switchDisabled")
   }
 
   function focusTodayRow(index) {
@@ -881,7 +929,7 @@ Panel {
         root.addRequestId = ""
         root.addState = root.resultState(result, ok)
         root.addMessage = root.resultMessage(result, message)
-        if (root.addMessage === "") root.addMessage = submittedStartAfter ? "Task created and switched" : "Task created"
+        if (root.addMessage === "") root.addMessage = submittedStartAfter ? root.tr("panel.add.createdAndSwitched") : root.tr("panel.add.created")
         root.forgetAddMode(id)
         if (root.addState === "succeeded" || (result && result.createdTaskId)) addField.clear()
         return
@@ -894,7 +942,7 @@ Panel {
           root.completionRequestId = ""
           root.todayState = root.mutationState
           root.todayMessage = root.mutationState === "succeeded"
-            ? "Completed " + root.completionTaskTitle
+            ? root.tr("panel.mutation.completed", { title: root.completionTaskTitle })
             : root.mutationMessage
           root.scheduleCompletionFocusRestore(root.mutationState === "succeeded")
         }
@@ -1028,13 +1076,13 @@ Panel {
 
               Button {
                 id: settingsBackButton
-                width: Style.space(78)
-                text: "← Back"
+                width: Math.max(Style.space(78), implicitWidth)
+                text: root.tr("panel.settings.back")
                 bordered: true
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 focusable: true
-                Accessible.name: "Back to task view"
+                Accessible.name: root.tr("panel.settings.backA11y")
                 Accessible.role: Accessible.Button
                 onActiveFocusChanged: if (activeFocus) Qt.callLater(function() { scroller.reveal(settingsBackButton) })
                 onClicked: root.closeSettings()
@@ -1046,18 +1094,18 @@ Panel {
                 spacing: Style.space(2)
                 Text {
                   width: parent.width
-                  text: "WIDGET SETTINGS"
+                  text: root.tr("panel.settings.title")
                   textFormat: Text.PlainText
                   color: root.accent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
                   font.letterSpacing: 1
-                  Accessible.name: "Super Productivity widget settings"
+                  Accessible.name: root.tr("panel.settings.titleA11y")
                 }
                 Text {
                   width: parent.width
-                  text: "Changes apply to this bar widget"
+                  text: root.tr("panel.settings.changesApply")
                   textFormat: Text.PlainText
                   color: root.dim
                   font.family: root.fontFamily
@@ -1070,7 +1118,7 @@ Panel {
 
             Text {
               width: parent.width
-              text: "GENERAL"
+              text: root.tr("panel.settings.general")
               textFormat: Text.PlainText
               color: root.foreground
               font.family: root.fontFamily
@@ -1079,17 +1127,17 @@ Panel {
               font.letterSpacing: 0.9
             }
 
-            SettingNumber { label: "Status refresh"; description: "Seconds between helper checks"; settingKey: "pollSeconds"; fallbackValue: 5; minimum: 2; maximum: 30; suffix: "seconds" }
-            SettingNumber { label: "Maximum bar width"; description: "Width before the task title is shortened"; settingKey: "maxTitleWidth"; fallbackValue: 300; minimum: 120; maximum: 520; suffix: "pixels" }
-            SettingToggle { label: "Show while idle"; description: "Keep the bar marker visible with no active task"; settingKey: "showIdle"; fallbackValue: true }
-            SettingToggle { label: "Start next after Complete"; description: "Start the next runnable task after panel completion"; settingKey: "autoStartNext"; fallbackValue: false }
-            SettingNumber { label: "Auto-next schedule window"; description: "Only scheduled tasks within ±window"; settingKey: "autoNextWindowMinutes"; fallbackValue: 30; minimum: 1; maximum: 1440; step: 5; suffix: "minutes" }
+            SettingNumber { label: root.tr("panel.settings.statusRefresh"); description: root.tr("panel.settings.statusRefreshDescription"); settingKey: "pollSeconds"; fallbackValue: 5; minimum: 2; maximum: 30; suffix: root.tr("panel.unit.seconds") }
+            SettingNumber { label: root.tr("panel.settings.maximumBarWidth"); description: root.tr("panel.settings.maximumBarWidthDescription"); settingKey: "maxTitleWidth"; fallbackValue: 300; minimum: 120; maximum: 520; suffix: root.tr("panel.unit.pixels") }
+            SettingToggle { label: root.tr("panel.settings.showWhileIdle"); description: root.tr("panel.settings.showWhileIdleDescription"); settingKey: "showIdle"; fallbackValue: true }
+            SettingToggle { label: root.tr("panel.settings.startNextAfterComplete"); description: root.tr("panel.settings.startNextAfterCompleteDescription"); settingKey: "autoStartNext"; fallbackValue: false }
+            SettingNumber { label: root.tr("panel.settings.autoNextWindow"); description: root.tr("panel.settings.autoNextWindowDescription"); settingKey: "autoNextWindowMinutes"; fallbackValue: 30; minimum: 1; maximum: 1440; step: 5; suffix: root.tr("panel.unit.minutes") }
 
             PanelSeparator { width: parent.width; foreground: root.foreground }
 
             Text {
               width: parent.width
-              text: "ALERTS"
+              text: root.tr("panel.settings.alerts")
               textFormat: Text.PlainText
               color: root.foreground
               font.family: root.fontFamily
@@ -1098,42 +1146,42 @@ Panel {
               font.letterSpacing: 0.9
             }
 
-            SettingToggle { label: "Task alerts"; description: "Countdown expiry or scheduled start, including while tracking"; settingKey: "alertEnabled"; fallbackValue: true }
-            SettingToggle { label: "Play alert sound"; description: "Sound for countdown expiry and scheduled start"; settingKey: "soundEnabled"; fallbackValue: true }
+            SettingToggle { label: root.tr("panel.settings.taskAlerts"); description: root.tr("panel.settings.taskAlertsDescription"); settingKey: "alertEnabled"; fallbackValue: true }
+            SettingToggle { label: root.tr("panel.settings.playAlertSound"); description: root.tr("panel.settings.playAlertSoundDescription"); settingKey: "soundEnabled"; fallbackValue: true }
             SettingNumber {
-              label: "Alert volume"
-              description: "Countdown and scheduled-start alerts and previews"
+              label: root.tr("panel.settings.alertVolume")
+              description: root.tr("panel.settings.alertVolumeDescription")
               settingKey: "alertVolume"
               fallbackValue: 100
               minimum: 0
               maximum: 100
               step: 5
               suffix: "%"
-              minimumLabel: "0 muted"
+              minimumLabel: root.tr("panel.settings.muted")
               maximumLabel: "100%"
               immediate: true
             }
-            SettingText { label: "Alert sound path"; description: "Custom sound for countdown expiry and scheduled start"; settingKey: "soundPath"; fallbackValue: ""; placeholder: "Bundled sound" }
+            SettingText { label: root.tr("panel.settings.alertSoundPath"); description: root.tr("panel.settings.alertSoundPathDescription"); settingKey: "soundPath"; fallbackValue: ""; placeholder: root.tr("panel.settings.bundledSound") }
             SettingChoice {
-              label: "Notification urgency"
-              description: "Urgency for countdown expiry and scheduled start"
+              label: root.tr("panel.settings.notificationUrgency")
+              description: root.tr("panel.settings.notificationUrgencyDescription")
               settingKey: "notificationUrgency"
               fallbackValue: "critical"
-              choices: [{ label: "Low", value: "low" }, { label: "Normal", value: "normal" }, { label: "Critical", value: "critical" }]
+              choices: [{ label: root.tr("panel.settings.urgencyLow"), value: "low" }, { label: root.tr("panel.settings.urgencyNormal"), value: "normal" }, { label: root.tr("panel.settings.urgencyCritical"), value: "critical" }]
             }
 
             Flow {
               width: parent.width
               spacing: Style.space(7)
               ActionButton {
-                text: root.engine && root.engine.testNotificationBusy ? "Sending…" : "Test notification"
-                accessibleText: root.engine && root.engine.testNotificationBusy ? "Test notification in progress" : "Test notification"
+                text: root.engine && root.engine.testNotificationBusy ? root.tr("panel.settings.sending") : root.tr("panel.settings.testNotification")
+                accessibleText: root.engine && root.engine.testNotificationBusy ? root.tr("panel.settings.testNotificationProgress") : root.tr("panel.settings.testNotification")
                 enabled: !!root.engine && !root.engine.testNotificationBusy
                 onTriggered: root.testNotification()
               }
               ActionButton {
-                text: root.engine && root.engine.previewBusy ? "Playing…" : "Preview sound"
-                accessibleText: root.engine && root.engine.previewBusy ? "Sound preview in progress" : "Preview alert sound"
+                text: root.engine && root.engine.previewBusy ? root.tr("panel.settings.playing") : root.tr("panel.settings.previewSound")
+                accessibleText: root.engine && root.engine.previewBusy ? root.tr("panel.settings.soundPreviewProgress") : root.tr("panel.settings.previewAlertSound")
                 enabled: !!root.engine && !root.engine.previewBusy
                 onTriggered: root.previewSound()
               }
@@ -1143,13 +1191,13 @@ Panel {
               visible: root.engine && root.engine.testNotificationState !== "idle"
               resultState: root.engine ? root.engine.testNotificationState : ""
               message: root.engine && root.engine.testNotificationMessage !== ""
-                ? root.engine.testNotificationMessage : "Sending test notification…"
+                ? root.engine.testNotificationMessage : root.tr("panel.settings.sendingTestNotification")
             }
             ResultFeedback {
               visible: root.engine && root.engine.previewState !== "idle"
               resultState: root.engine ? root.engine.previewState : ""
               message: root.engine && root.engine.previewMessage !== ""
-                ? root.engine.previewMessage : "Playing alert sound…"
+                ? root.engine.previewMessage : root.tr("panel.settings.playingAlertSound")
             }
             ResultFeedback { visible: root.settingsState !== ""; resultState: root.settingsState; message: root.settingsMessage }
           }
@@ -1162,18 +1210,18 @@ Panel {
 
           PanelHero {
             width: parent.width
-            title: root.task ? root.titleFor(root.task) : (root.hasNextScheduled ? root.nextScheduledTitle : "Super Productivity")
-            meta: root.taskOverdue ? "OVERTIME" : (root.errorText !== "" ? "CONNECTION ISSUE" : (root.task ? "CURRENT FOCUS" : (root.hasNextScheduled ? "NEXT SCHEDULED" : "READY")))
+            title: root.task ? root.titleFor(root.task) : (root.hasNextScheduled ? root.nextScheduledTitle : root.tr("app.name"))
+            meta: root.taskOverdue ? root.tr("panel.hero.overtime") : (root.errorText !== "" ? root.tr("panel.hero.connectionIssue") : (root.task ? root.tr("panel.hero.currentFocus") : (root.hasNextScheduled ? root.tr("panel.hero.nextScheduled") : root.tr("panel.hero.ready"))))
             detail: root.taskOverdue
               ? Model.formatOvertime(root.overtimeMs)
-              : (root.task ? root.taskClock(root.task, true) : (root.hasNextScheduled ? "Starts at " + root.nextScheduledTime : "No task running"))
+              : (root.task ? root.taskClock(root.task, true) : (root.hasNextScheduled ? root.tr("panel.hero.startsAt", { time: root.nextScheduledTime }) : root.tr("panel.hero.noTaskRunning")))
             foreground: root.taskOverdue || root.errorText !== "" ? root.urgent : root.foreground
             fontFamily: root.fontFamily
             Accessible.name: root.task
-              ? root.titleFor(root.task) + ", " + root.taskClock(root.task, true)
+              ? root.tr("panel.hero.currentTaskA11y", { title: root.titleFor(root.task), time: root.taskClock(root.task, true) })
               : (root.hasNextScheduled
-                ? "Super Productivity, next scheduled task " + root.nextScheduledTitle + " at " + root.nextScheduledTime
-                : "Super Productivity, no current task")
+                ? root.tr("panel.hero.nextScheduledA11y", { title: root.nextScheduledTitle, time: root.nextScheduledTime })
+                : root.tr("panel.hero.noCurrentTaskA11y"))
             iconComponent: Component {
               Item {
                 implicitWidth: Style.font.display
@@ -1219,11 +1267,11 @@ Panel {
                 spacing: Style.space(4)
                 PanelActionButton {
                   iconText: "󰑐"
-                  tooltipText: "Refresh status"
+                  tooltipText: root.tr("panel.hero.refreshStatus")
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   focusable: true
-                  Accessible.name: "Refresh Super Productivity status"
+                  Accessible.name: root.tr("panel.hero.refreshStatusA11y")
                   Accessible.role: Accessible.Button
                   onActiveFocusChanged: root.heroControlFocused = activeFocus
                   onClicked: if (root.engine) root.engine.refresh()
@@ -1232,14 +1280,14 @@ Panel {
                 PanelActionButton {
                   id: settingsButton
                   iconText: "󰒓"
-                  tooltipText: root.settingsView ? "Widget settings open" : "Open widget settings"
+                  tooltipText: root.settingsView ? root.tr("panel.hero.settingsOpen") : root.tr("panel.hero.openSettings")
                   foreground: root.settingsView ? root.accent : root.foreground
                   hoverColor: root.accent
                   hasCursor: root.settingsView
                   bordered: root.settingsView
                   fontFamily: root.fontFamily
                   focusable: true
-                  Accessible.name: root.settingsView ? "Super Productivity widget settings open" : "Open Super Productivity widget settings"
+                  Accessible.name: root.settingsView ? root.tr("panel.hero.settingsOpenA11y") : root.tr("panel.hero.openSettingsA11y")
                   Accessible.role: Accessible.Button
                   onActiveFocusChanged: root.heroControlFocused = activeFocus
                   onClicked: root.toggleSettings()
@@ -1247,11 +1295,11 @@ Panel {
                 }
                 PanelActionButton {
                   iconText: "󰏌"
-                  tooltipText: "Open Super Productivity"
+                  tooltipText: root.tr("panel.hero.openApp")
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   focusable: true
-                  Accessible.name: "Open Super Productivity"
+                  Accessible.name: root.tr("panel.hero.openApp")
                   Accessible.role: Accessible.Button
                   onActiveFocusChanged: root.heroControlFocused = activeFocus
                   onClicked: root.openApp()
@@ -1270,12 +1318,12 @@ Panel {
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             elide: Text.ElideRight
-            Accessible.name: "Current task context: " + text
+            Accessible.name: root.tr("panel.context.current", { context: text })
           }
 
           FeedbackText { visible: root.errorText !== ""; resultState: "failed"; message: root.errorText }
-          FeedbackText { visible: root.contextWarning !== ""; resultState: "conflict"; message: "Context warning: " + root.contextWarning }
-          FeedbackText { visible: root.alertError !== ""; resultState: "failed"; message: "Alert: " + root.alertError }
+          FeedbackText { visible: root.contextWarning !== ""; resultState: "conflict"; message: root.tr("panel.context.warning", { warning: root.contextWarning }) }
+          FeedbackText { visible: root.alertError !== ""; resultState: "failed"; message: root.tr("panel.context.alert", { error: root.alertError }) }
 
           Column {
             visible: !!root.task
@@ -1302,25 +1350,25 @@ Panel {
               columns: width >= Style.space(360) ? 3 : 1
               columnSpacing: Style.space(8)
               rowSpacing: Style.space(6)
-              Metric { width: metrics.columns === 3 ? (metrics.width - metrics.columnSpacing * 2) / 3 : metrics.width; label: root.taskOverdue ? "OVERTIME" : "REMAINING"; value: root.taskOverdue ? Model.formatOvertime(root.overtimeMs) : (root.estimateMs > 0 ? Model.formatRemaining(root.remainingMs) : "No estimate"); emphasis: true; warning: root.taskOverdue }
-              Metric { width: metrics.columns === 3 ? (metrics.width - metrics.columnSpacing * 2) / 3 : metrics.width; label: "ESTIMATE"; value: Model.formatRemaining(root.estimateMs) }
-              Metric { width: metrics.columns === 3 ? (metrics.width - metrics.columnSpacing * 2) / 3 : metrics.width; label: "SPENT"; value: Model.formatRemaining(root.spentMs) }
+              Metric { width: metrics.columns === 3 ? (metrics.width - metrics.columnSpacing * 2) / 3 : metrics.width; label: root.taskOverdue ? root.tr("panel.hero.overtime") : root.tr("panel.metric.remaining"); value: root.taskOverdue ? Model.formatOvertime(root.overtimeMs) : (root.estimateMs > 0 ? Model.formatRemaining(root.remainingMs) : root.tr("common.noEstimate")); emphasis: true; warning: root.taskOverdue }
+              Metric { width: metrics.columns === 3 ? (metrics.width - metrics.columnSpacing * 2) / 3 : metrics.width; label: root.tr("panel.metric.estimate"); value: Model.formatRemaining(root.estimateMs) }
+              Metric { width: metrics.columns === 3 ? (metrics.width - metrics.columnSpacing * 2) / 3 : metrics.width; label: root.tr("panel.metric.spent"); value: Model.formatRemaining(root.spentMs) }
             }
 
             Flow {
               width: parent.width
               spacing: Style.space(7)
-              ActionButton { id: stopButton; text: root.mutationBusy && root.engine.mutationKind === "stop" ? "Stopping…" : "Stop"; accessibleText: "Stop current task"; enabled: !root.mutationBusy; onTriggered: root.stopCurrent() }
+              ActionButton { id: stopButton; text: root.mutationBusy && root.engine.mutationKind === "stop" ? root.tr("panel.action.stopping") : root.tr("panel.action.stop"); accessibleText: root.tr("panel.action.stopCurrent"); enabled: !root.mutationBusy; onTriggered: root.stopCurrent() }
               ActionButton {
                 id: completeButton
                 visible: !root.currentHasChildren
                 enabled: visible && !root.mutationBusy
-                text: root.mutationBusy && root.engine.mutationKind === "complete" ? "Completing…" : "Complete"
-                accessibleText: "Complete current task. Auto-next considers scheduled tasks only within the configured schedule window"
+                text: root.mutationBusy && root.engine.mutationKind === "complete" ? root.tr("panel.action.completing") : root.tr("panel.action.complete")
+                accessibleText: root.tr("panel.action.completeCurrent")
                 onTriggered: root.completeCurrent()
               }
-              ActionButton { id: extendFiveButton; text: "+5m"; accessibleText: "Extend current task by 5 minutes"; enabled: !root.mutationBusy; onTriggered: root.extendCurrent("5") }
-              ActionButton { id: extendFifteenButton; text: "+15m"; accessibleText: "Extend current task by 15 minutes"; enabled: !root.mutationBusy; onTriggered: root.extendCurrent("15") }
+              ActionButton { id: extendFiveButton; text: "+5m"; accessibleText: root.tr("panel.action.extendFive"); enabled: !root.mutationBusy; onTriggered: root.extendCurrent("5") }
+              ActionButton { id: extendFifteenButton; text: "+15m"; accessibleText: root.tr("panel.action.extendFifteen"); enabled: !root.mutationBusy; onTriggered: root.extendCurrent("15") }
             }
 
             Row {
@@ -1332,10 +1380,10 @@ Panel {
                 enabled: !root.mutationBusy
                 foreground: root.foreground
                 accent: root.accent
-                placeholderText: "Minutes (1–1440)"
+                placeholderText: root.tr("panel.action.minutesPlaceholder")
                 inputMethodHints: Qt.ImhDigitsOnly
                 validator: IntValidator { bottom: 1; top: 1440 }
-                Accessible.name: "Custom whole-minute extension"
+                Accessible.name: root.tr("panel.action.customExtension")
                 onActiveFocusChanged: {
                   root.editableControlFocused = activeFocus
                   if (activeFocus) Qt.callLater(function() { scroller.reveal(customMinutes) })
@@ -1345,14 +1393,14 @@ Panel {
               }
               Button {
                 id: extendButton
-                width: Style.space(96)
-                text: "Extend"
+                width: Math.max(Style.space(96), implicitWidth)
+                text: root.tr("panel.action.extend")
                 bordered: true
                 enabled: !root.mutationBusy
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 focusable: true
-                Accessible.name: "Apply custom extension"
+                Accessible.name: root.tr("panel.action.applyCustomExtension")
                 Accessible.role: Accessible.Button
                 onClicked: root.extendCurrent(customMinutes.text)
                 Accessible.onPressAction: root.extendCurrent(customMinutes.text)
@@ -1362,7 +1410,7 @@ Panel {
             Text {
               visible: root.currentHasChildren
               width: parent.width
-              text: "Complete subtasks first; Super Productivity manages the parent."
+              text: root.tr("panel.task.completeSubtasksFirst")
               textFormat: Text.PlainText
               color: root.dim
               font.family: root.fontFamily
@@ -1377,8 +1425,8 @@ Panel {
             visible: !root.task && root.errorText === ""
             width: parent.width
             text: root.hasNextScheduled
-              ? "Next at " + root.nextScheduledTime + ": " + root.nextScheduledTitle + ". Start it from Today when ready."
-              : "Pick an explicit task below, or capture the next one with Quick Add."
+              ? root.tr("panel.idle.nextHint", { time: root.nextScheduledTime, title: root.nextScheduledTitle })
+              : root.tr("panel.idle.pickHint")
             textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
@@ -1395,10 +1443,10 @@ Panel {
 
             SectionToggle {
               id: quickAddSectionToggle
-              text: "QUICK ADD"
+              text: root.tr("panel.quickAdd.title")
               collapsed: root.quickAddCollapsed
               countText: ""
-              accessibleText: (root.quickAddCollapsed ? "Expand" : "Collapse") + " Quick Add"
+              accessibleText: root.quickAddCollapsed ? root.tr("panel.quickAdd.expand") : root.tr("panel.quickAdd.collapse")
               onTriggered: root.quickAddCollapsed = !root.quickAddCollapsed
             }
 
@@ -1419,7 +1467,7 @@ Panel {
                   foreground: root.foreground
                   accent: root.accent
                   placeholderText: "Write report 30m +Work #focus @tomorrow"
-                  Accessible.name: "Quick Add task"
+                  Accessible.name: root.tr("panel.quickAdd.taskA11y")
                   onActiveFocusChanged: {
                     root.editableControlFocused = activeFocus
                     if (activeFocus) Qt.callLater(function() { scroller.reveal(addField) })
@@ -1444,8 +1492,8 @@ Panel {
                   foreground: root.accent
                   fontFamily: root.fontFamily
                   focusable: true
-                  tooltipText: root.quickAddSwitchValue ? "Add task and switch to it" : "Add task"
-                  Accessible.name: root.quickAddSwitchValue ? "Add task and switch to it" : "Add task"
+                  tooltipText: root.quickAddSwitchValue ? root.tr("panel.quickAdd.addAndSwitch") : root.tr("panel.quickAdd.add")
+                  Accessible.name: tooltipText
                   Accessible.role: Accessible.Button
                   onClicked: root.submitAdd(root.quickAddSwitchValue)
                   Accessible.onPressAction: root.submitAdd(root.quickAddSwitchValue)
@@ -1475,8 +1523,8 @@ Panel {
                   border.width: 0
                   activeFocusOnTab: true
                   Accessible.role: Accessible.CheckBox
-                  Accessible.name: "Add & switch"
-                  Accessible.description: "When checked, Enter and the plus button add the task and switch to it"
+                  Accessible.name: root.tr("panel.quickAdd.switch")
+                  Accessible.description: root.tr("panel.quickAdd.switchDescription")
                   Accessible.checked: root.quickAddSwitchValue
                   Accessible.onPressAction: root.toggleQuickAddSwitch()
                   Keys.onReturnPressed: function(event) { event.accepted = true; root.toggleQuickAddSwitch() }
@@ -1514,7 +1562,7 @@ Panel {
                     }
                     Text {
                       anchors.verticalCenter: parent.verticalCenter
-                      text: "Add & switch"
+                      text: root.tr("panel.quickAdd.switch")
                       color: root.quickAddSwitchValue ? root.accent : root.foreground
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
@@ -1543,10 +1591,10 @@ Panel {
 
             SectionToggle {
               id: todaySectionToggle
-              text: "TODAY"
+              text: root.tr("panel.today.title")
               collapsed: root.todayCollapsed
               countText: String(root.visibleTodayTasks.length)
-              accessibleText: (root.todayCollapsed ? "Expand" : "Collapse") + " Today tasks"
+              accessibleText: root.todayCollapsed ? root.tr("panel.today.expand") : root.tr("panel.today.collapse")
               onTriggered: {
                 root.todayCollapsed = !root.todayCollapsed
                 if (!root.todayCollapsed) Qt.callLater(function() { root.focusTodayRow(Math.max(0, root.todayCursorIndex)) })
@@ -1563,8 +1611,8 @@ Panel {
                 width: parent.width
                 foreground: root.foreground
                 accent: root.accent
-                placeholderText: "Search title, project, or parent"
-                Accessible.name: "Search Today tasks by title, project, or parent"
+                placeholderText: root.tr("panel.today.searchPlaceholder")
+                Accessible.name: root.tr("panel.today.searchA11y")
                 onActiveFocusChanged: {
                   root.editableControlFocused = activeFocus
                   if (activeFocus) Qt.callLater(function() { scroller.reveal(searchField) })
@@ -1574,7 +1622,7 @@ Panel {
               Text {
                 visible: root.visibleTodayTasks.length === 0
                 width: parent.width
-                text: searchField.text !== "" ? "No Today tasks match this search." : (root.refreshing ? "Loading Today…" : "No tasks left today.")
+                text: searchField.text !== "" ? root.tr("panel.today.noSearchMatch") : (root.refreshing ? root.tr("panel.today.loading") : root.tr("panel.today.noneLeft"))
                 textFormat: Text.PlainText
                 color: root.dim
                 font.family: root.fontFamily
@@ -1621,14 +1669,10 @@ Panel {
                   opacity: root.mutationBusy && !pending ? 0.56 : 1
                   activeFocusOnTab: true
                   Accessible.role: Accessible.Button
-                  Accessible.name: (parentRow ? (expanded ? "Expanded parent " : "Collapsed parent ") : "Task ")
-                    + Model.displayTitle(modelData, 120) + ", " + root.taskClock(modelData, current)
-                    + (root.contextText(modelData) !== "" ? ", " + root.contextText(modelData) : "")
-                    + (current ? ", current" : (pending ? ", pending" : ""))
+                  Accessible.name: root.taskRowAccessibleName(modelData, current, pending, parentRow, expanded)
                   Accessible.description: parentRow
-                    ? ((searchField.text.trim() === "" ? "Press Enter to toggle subtasks. " : "Search result; collapse state is unchanged. ")
-                      + "Complete is not available. Complete subtasks first; Super Productivity manages the parent.")
-                    : "Use the Start button to start tracking. Use Complete or press C to complete"
+                    ? (searchField.text.trim() === "" ? root.tr("panel.today.parentToggleDescription") : root.tr("panel.today.parentSearchDescription"))
+                    : root.tr("panel.today.taskDescription")
                   Accessible.onPressAction: activate()
 
                   Keys.onPressed: function(event) { root.handleRowKey(event, todayRow) }
@@ -1669,7 +1713,7 @@ Panel {
                       }
                       Text {
                         width: parent.width
-                        text: Model.displayTitle(todayRow.modelData, 120)
+                        text: Model.displayTitle(todayRow.modelData, 120, root.tr("common.untitledTask"))
                         textFormat: Text.PlainText
                         elide: Text.ElideRight
                         color: todayRow.current ? root.accent : (todayRow.pending ? root.urgent : root.foreground)
@@ -1679,7 +1723,7 @@ Panel {
                       }
                       Text {
                         width: parent.width
-                        text: (todayRow.current ? "CURRENT · " : (todayRow.pending ? "PENDING · " : ""))
+                        text: (todayRow.current ? root.tr("panel.today.current") + " · " : (todayRow.pending ? root.tr("panel.today.pending") + " · " : ""))
                           + root.taskClock(todayRow.modelData, todayRow.current)
                           + (root.contextText(todayRow.modelData) !== "" ? " · " + root.contextText(todayRow.modelData) : "")
                         textFormat: Text.PlainText
@@ -1699,14 +1743,14 @@ Panel {
                       Button {
                         id: startControl
                         visible: todayRow.canStart
-                        width: Style.space(56)
-                        text: todayRow.current ? "Active" : (todayRow.pending ? "Starting…" : "Start")
+                        width: Math.max(Style.space(56), implicitWidth)
+                        text: todayRow.current ? root.tr("panel.today.active") : (todayRow.pending ? root.tr("panel.today.starting") : root.tr("panel.today.start"))
                         bordered: true
                         enabled: !root.mutationBusy && !todayRow.current
                         foreground: todayRow.current ? root.accent : root.foreground
                         fontFamily: root.fontFamily
                         focusable: true
-                        Accessible.name: "Start " + Model.displayTitle(todayRow.modelData, 120)
+                        Accessible.name: root.tr("panel.today.startTask", { title: Model.displayTitle(todayRow.modelData, 120, root.tr("common.untitledTask")) })
                         Accessible.role: Accessible.Button
                         onActiveFocusChanged: if (activeFocus) {
                           root.todayCursorIndex = todayRow.index
@@ -1719,18 +1763,18 @@ Panel {
                       Button {
                         id: completeControl
                         visible: !todayRow.parentRow
-                        width: visible ? Style.space(72) : 0
-                        text: todayRow.pending && root.engine && String(root.engine.mutationKind || "").indexOf("complete") === 0 ? "Working…" : "Complete"
+                        width: visible ? Math.max(Style.space(72), implicitWidth) : 0
+                        text: todayRow.pending && root.engine && String(root.engine.mutationKind || "").indexOf("complete") === 0 ? root.tr("panel.today.working") : root.tr("panel.action.complete")
                         bordered: true
                         enabled: visible && !root.mutationBusy
                         foreground: root.foreground
                         fontFamily: root.fontFamily
                         focusable: true
-                        tooltipText: "Complete " + Model.displayTitle(todayRow.modelData, 120)
-                        Accessible.name: "Complete " + Model.displayTitle(todayRow.modelData, 120)
+                        tooltipText: root.tr("panel.today.completeTask", { title: Model.displayTitle(todayRow.modelData, 120, root.tr("common.untitledTask")) })
+                        Accessible.name: tooltipText
                         Accessible.description: todayRow.current
-                          ? "Completes the current task. Auto-next considers scheduled tasks only within the configured schedule window"
-                          : "Completes this listed task"
+                          ? root.tr("panel.today.completeCurrentDescription")
+                          : root.tr("panel.today.completeListedDescription")
                         Accessible.role: Accessible.Button
                         onActiveFocusChanged: if (activeFocus) {
                           root.todayCursorIndex = todayRow.index
@@ -1777,9 +1821,9 @@ Panel {
         Button {
           id: goTopButton
           anchors.centerIn: parent
-          width: Style.space(92)
+          width: Math.max(Style.space(92), implicitWidth)
           height: Style.space(34)
-          text: "↑ Go top"
+          text: root.tr("panel.goTop.label")
           bordered: false
           visible: root.goTopVisible
           enabled: visible
@@ -1787,13 +1831,13 @@ Panel {
           focusable: visible
           foreground: root.foreground
           fontFamily: root.fontFamily
-          tooltipText: "Scroll to top (Home)"
-          Accessible.name: "Go to top"
+          tooltipText: root.tr("panel.goTop.tooltip")
+          Accessible.name: root.tr("panel.goTop.a11y")
           Accessible.description: root.settingsView
-            ? "Scrolls to the top and moves focus to Back"
+            ? root.tr("panel.goTop.settingsDescription")
             : (root.quickAddCollapsed
-              ? "Scrolls to the top and moves focus to the first visible header control"
-              : "Scrolls to the top and moves focus to Quick Add")
+              ? root.tr("panel.goTop.headerDescription")
+              : root.tr("panel.goTop.quickAddDescription"))
           Accessible.role: Accessible.Button
           onClicked: root.goTop()
           Accessible.onPressAction: root.goTop()
@@ -1816,13 +1860,14 @@ Panel {
     property string maximumLabel: ""
     property bool immediate: false
     width: parent ? parent.width : 0
-    implicitHeight: Style.space(minimumLabel !== "" || maximumLabel !== "" ? 78 : 68)
+    implicitHeight: Math.max(Style.space(minimumLabel !== "" || maximumLabel !== "" ? 78 : 68), numberLabelColumn.implicitHeight + Style.space(20))
     radius: Style.cornerRadius
     color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
     border.width: numberField.activeFocus ? 1 : 0
     border.color: root.accent
 
     Column {
+      id: numberLabelColumn
       anchors.left: parent.left
       anchors.right: controls.left
       anchors.leftMargin: Style.space(10)
@@ -1830,17 +1875,19 @@ Panel {
       anchors.verticalCenter: parent.verticalCenter
       anchors.verticalCenterOffset: rangeLabels.visible ? -Style.space(7) : 0
       spacing: Style.space(2)
-      Text { width: parent.width; text: numberSetting.label; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body; elide: Text.ElideRight }
+      Text { width: parent.width; text: numberSetting.label; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body; wrapMode: Text.WordWrap }
       Text {
         width: parent.width
-        text: numberSetting.description + " · "
-          + (numberSetting.minimumLabel !== "" ? numberSetting.minimumLabel : numberSetting.minimum + numberSetting.suffix)
-          + "–"
-          + (numberSetting.maximumLabel !== "" ? numberSetting.maximumLabel : numberSetting.maximum + numberSetting.suffix)
+        text: root.tr("panel.setting.rangeSummary", {
+          description: numberSetting.description,
+          minimum: numberSetting.minimumLabel !== "" ? numberSetting.minimumLabel : numberSetting.minimum,
+          maximum: numberSetting.maximumLabel !== "" ? numberSetting.maximumLabel : numberSetting.maximum,
+          suffix: numberSetting.minimumLabel !== "" || numberSetting.maximumLabel !== "" ? "" : numberSetting.suffix
+        }).trim()
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
+        wrapMode: Text.WordWrap
       }
     }
     Row {
@@ -1857,7 +1904,7 @@ Panel {
         accent: root.accent
         inputMethodHints: Qt.ImhDigitsOnly
         validator: IntValidator { bottom: numberSetting.minimum; top: numberSetting.maximum }
-        Accessible.name: numberSetting.label + ", " + numberSetting.minimum + " to " + numberSetting.maximum + " " + numberSetting.suffix
+        Accessible.name: root.tr("panel.setting.rangeA11y", { label: numberSetting.label, minimum: numberSetting.minimum, maximum: numberSetting.maximum, suffix: numberSetting.suffix })
         onActiveFocusChanged: {
           root.editableControlFocused = activeFocus
           if (activeFocus) Qt.callLater(function() { scroller.reveal(numberField) })
@@ -1868,8 +1915,8 @@ Panel {
       }
       Button {
         id: numberApply
-        width: Style.space(62)
-        text: "Apply"
+        width: Math.max(Style.space(62), implicitWidth)
+        text: root.tr("common.apply")
         visible: !numberSetting.immediate
         enabled: visible
         activeFocusOnTab: visible
@@ -1877,7 +1924,7 @@ Panel {
         foreground: root.foreground
         fontFamily: root.fontFamily
         focusable: true
-        Accessible.name: "Apply " + numberSetting.label
+        Accessible.name: root.tr("panel.setting.applyLabel", { label: numberSetting.label })
         Accessible.role: Accessible.Button
         onActiveFocusChanged: if (activeFocus) Qt.callLater(function() { scroller.reveal(numberApply) })
         onClicked: numberSetting.applyValue()
@@ -1904,8 +1951,9 @@ Panel {
       if (!/^\d+$/.test(value) || Number(value) < minimum || Number(value) > maximum
           || (step > 1 && Number(value) !== minimum && Number(value) % step !== 0)) {
         root.settingsState = "failed"
-        root.settingsMessage = label + " must be a whole number from " + minimum + " to " + maximum
-          + (step > 1 ? " in steps of " + step : "")
+        root.settingsMessage = step > 1
+          ? root.tr("panel.setting.wholeNumberSteps", { label: label, minimum: minimum, maximum: maximum, step: step })
+          : root.tr("panel.setting.wholeNumber", { label: label, minimum: minimum, maximum: maximum })
         numberField.forceActiveFocus(Qt.OtherFocusReason)
         return
       }
@@ -1921,7 +1969,7 @@ Panel {
     property string settingKey: ""
     property bool fallbackValue: false
     width: parent ? parent.width : 0
-    implicitHeight: Style.space(56)
+    implicitHeight: Math.max(Style.space(56), toggleLabels.implicitHeight + Style.space(20))
     radius: Style.cornerRadius
     color: toggleSetting.activeFocus ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.09)
                                       : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
@@ -1938,14 +1986,15 @@ Panel {
     Keys.onSpacePressed: function(event) { event.accepted = true; toggleSetting.toggleValue() }
     onActiveFocusChanged: if (activeFocus) Qt.callLater(function() { scroller.reveal(toggleSetting) })
     Column {
+      id: toggleLabels
       anchors.left: parent.left
       anchors.right: settingSwitch.left
       anchors.leftMargin: Style.space(10)
       anchors.rightMargin: Style.space(10)
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(2)
-      Text { width: parent.width; text: toggleSetting.label; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body; elide: Text.ElideRight }
-      Text { width: parent.width; text: toggleSetting.description; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; elide: Text.ElideRight }
+      Text { width: parent.width; text: toggleSetting.label; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body; wrapMode: Text.WordWrap }
+      Text { width: parent.width; text: toggleSetting.description; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
     }
     ToggleSwitch {
       id: settingSwitch
@@ -1980,15 +2029,16 @@ Panel {
     property string fallbackValue: ""
     property string placeholder: ""
     width: parent ? parent.width : 0
-    implicitHeight: Style.space(94)
+    implicitHeight: textSettingLayout.implicitHeight + Style.space(18)
     radius: Style.cornerRadius
     color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
     Column {
+      id: textSettingLayout
       anchors.fill: parent
       anchors.margins: Style.space(9)
       spacing: Style.space(5)
       Text { width: parent.width; text: textSetting.label; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body }
-      Text { width: parent.width; text: textSetting.description; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; elide: Text.ElideRight }
+      Text { width: parent.width; text: textSetting.description; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
       Row {
         width: parent.width
         spacing: Style.space(7)
@@ -2009,13 +2059,13 @@ Panel {
         }
         Button {
           id: textApply
-          width: Style.space(62)
-          text: "Apply"
+          width: Math.max(Style.space(62), implicitWidth)
+          text: root.tr("common.apply")
           bordered: true
           foreground: root.foreground
           fontFamily: root.fontFamily
           focusable: true
-          Accessible.name: "Apply " + textSetting.label
+          Accessible.name: root.tr("panel.setting.applyLabel", { label: textSetting.label })
           Accessible.role: Accessible.Button
           onActiveFocusChanged: if (activeFocus) Qt.callLater(function() { scroller.reveal(textApply) })
           onClicked: textSetting.applyValue()
@@ -2027,7 +2077,7 @@ Panel {
       var value = String(settingTextField.text || "").trim()
       if (/[\u0000-\u001f\u007f]/.test(value)) {
         root.settingsState = "failed"
-        root.settingsMessage = label + " contains an unsupported control character"
+        root.settingsMessage = root.tr("panel.setting.unsupportedControlCharacter", { label: label })
         settingTextField.forceActiveFocus(Qt.OtherFocusReason)
         return
       }
@@ -2065,14 +2115,14 @@ Panel {
             id: choiceButton
             required property var modelData
             readonly property bool selected: String(root.setting(choiceSetting.settingKey, choiceSetting.fallbackValue)) === String(modelData.value)
-            width: Math.min(choiceFlow.width, Math.max(Style.space(74), String(modelData.label).length * Style.font.body * 0.62 + Style.space(24)))
+            width: Math.min(choiceFlow.width, Math.max(Style.space(74), implicitWidth))
             text: String(modelData.label)
             bordered: true
             foreground: selected ? root.accent : root.foreground
             fontFamily: root.fontFamily
             focusable: true
-            Accessible.name: choiceSetting.label + ": " + modelData.label
-            Accessible.description: selected ? "Selected" : "Not selected"
+            Accessible.name: root.tr("panel.setting.choiceA11y", { label: choiceSetting.label, choice: modelData.label })
+            Accessible.description: selected ? root.tr("common.selected") : root.tr("common.notSelected")
             Accessible.role: Accessible.RadioButton
             Accessible.checked: selected
             onActiveFocusChanged: if (activeFocus) Qt.callLater(function() { scroller.reveal(choiceButton) })
@@ -2099,7 +2149,7 @@ Panel {
     border.width: emphasis ? 1 : 0
     border.color: warning ? root.urgent : Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.35)
     Accessible.role: Accessible.StaticText
-    Accessible.name: label + ": " + value
+    Accessible.name: root.tr("panel.metric.a11y", { label: label, value: value })
     Column {
       anchors.centerIn: parent
       spacing: Style.space(2)
@@ -2112,7 +2162,7 @@ Panel {
     id: action
     property string accessibleText: text
     signal triggered()
-    implicitWidth: Math.max(Style.space(76), action.text.length * Style.font.body * 0.65 + Style.space(24))
+    implicitWidth: Math.max(Style.space(76), contentItem ? contentItem.implicitWidth + Style.space(24) : 0)
     bordered: true
     foreground: root.foreground
     fontFamily: root.fontFamily
@@ -2189,7 +2239,7 @@ Panel {
                            : (pending ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.24)
                                       : Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.35))
     Accessible.role: Accessible.AlertMessage
-    Accessible.name: resultState + ": " + message
+    Accessible.name: root.tr("panel.feedback.a11y", { state: root.stateDisplay(resultState), message: message })
     Row {
       id: feedbackRow
       anchors.left: parent.left
@@ -2198,7 +2248,7 @@ Panel {
       anchors.leftMargin: Style.space(8)
       anchors.rightMargin: Style.space(8)
       spacing: Style.space(8)
-      Text { text: feedback.resultState.toUpperCase(); color: feedback.positive ? root.accent : (feedback.pending ? root.dim : root.urgent); font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true; font.letterSpacing: 0.6 }
+      Text { text: root.stateDisplay(feedback.resultState); color: feedback.positive ? root.accent : (feedback.pending ? root.dim : root.urgent); font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true; font.letterSpacing: 0.6 }
       Text { width: parent.width - parent.children[0].width - parent.spacing; text: feedback.message; textFormat: Text.PlainText; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap }
     }
   }

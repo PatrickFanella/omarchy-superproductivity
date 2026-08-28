@@ -31,6 +31,53 @@ class FakeClient:
 
 
 class BackendTests(unittest.TestCase):
+    def test_mutation_result_preserves_message_and_validates_optional_metadata(self):
+        legacy = sp.mutation_result("start", "task", "succeeded", "done", True, message="Task started")
+        self.assertEqual(legacy["message"], "Task started")
+        self.assertNotIn("messageKey", legacy)
+        self.assertNotIn("messageArgs", legacy)
+
+        semantic = sp.fixed_mutation_result(
+            "start", "task", "succeeded", "done", True, message="Task started",
+        )
+        self.assertEqual(semantic["messageKey"], "task-started")
+
+        localized = sp.mutation_result(
+            "add", "task", "succeeded", "done", True,
+            message="Task added", messageKey="custom-result", messageArgs={"title": "--unsafe"},
+        )
+        self.assertEqual(localized["message"], "Task added")
+        self.assertEqual(localized["messageKey"], "custom-result")
+        self.assertEqual(localized["messageArgs"], {"title": "--unsafe"})
+
+        for values in (
+            {"messageKey": ""}, {"messageKey": 1}, {"messageKey": "bad\nkey"},
+            {"messageArgs": []}, {"messageArgs": "bad"},
+        ):
+            with self.subTest(values=values), self.assertRaises(sp.BridgeError):
+                sp.mutation_result("start", "task", "failed", "preflight", False, **values)
+
+    def test_fixed_mutation_messages_all_have_unique_semantic_keys(self):
+        self.assertEqual(len(sp._MESSAGE_KEYS), len(set(sp._MESSAGE_KEYS.values())))
+        for message, key in sp._MESSAGE_KEYS.items():
+            with self.subTest(message=message):
+                result = sp.fixed_mutation_result(
+                    "start", "task", "failed", "preflight", False, message=message,
+                )
+                self.assertEqual((result["message"], result["messageKey"]), (message, key))
+
+        with self.assertRaisesRegex(sp.BridgeError, "Missing semantic key"):
+            sp.fixed_mutation_result(
+                "start", "task", "failed", "preflight", False, message="Unregistered fixed text",
+            )
+
+    def test_dynamic_upstream_diagnostic_stays_raw_even_if_text_matches_fixed_message(self):
+        result = sp.mutation_result(
+            "start", "task", "failed", "dispatch", False, message="Task started",
+        )
+        self.assertEqual(result["message"], "Task started")
+        self.assertNotIn("messageKey", result)
+
     def test_parse_native_like_subset(self):
         parsed = sp.parse_shorthand(
             "Write report 1.5h +Wor @tomorrow",
@@ -335,6 +382,56 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[0].kwargs["timeout"], sp.NOTIFICATION_TIMEOUT)
         self.assertEqual(run.call_args_list[1].kwargs["timeout"], sp.SOUND_PLAYBACK_TIMEOUT)
         self.assertEqual(run.call_count, 2)
+
+    @mock.patch.object(sp.subprocess, "run")
+    def test_notification_defaults_and_localized_text_use_safe_argv(self, run):
+        run.return_value.returncode = 0
+        sp.test_notification("normal")
+        self.assertEqual(run.call_args.args[0], [
+            "notify-send", "--urgency=normal", "--icon=alarm-symbolic", "--",
+            "Super Productivity", "Notification test",
+        ])
+
+        run.reset_mock()
+        sp.test_notification("normal", "  --Übersicht\n", "  --Alles\tbereit  ")
+        self.assertEqual(run.call_args.args[0], [
+            "notify-send", "--urgency=normal", "--icon=alarm-symbolic", "--",
+            "--Übersicht", "--Alles bereit",
+        ])
+
+    @mock.patch.object(sp.subprocess, "run")
+    def test_notification_omitted_defaults_remain_byte_for_byte(self, run):
+        run.return_value.returncode = 0
+        sp.test_notification("normal")
+        self.assertEqual(run.call_args.args[0][-2:], ["Super Productivity", "Notification test"])
+
+        run.reset_mock()
+        sp.alert("Task", silent=True)
+        self.assertEqual(run.call_args.args[0][-2:], ["Super Productivity", "Task"])
+
+    @mock.patch.object(sp.subprocess, "run")
+    def test_explicit_empty_or_control_only_notification_fields_are_rejected(self, run):
+        for invoke in (
+            lambda value: sp.test_notification("normal", value, "Body"),
+            lambda value: sp.test_notification("normal", "Title", value),
+            lambda value: sp.alert("Body", silent=True, notification_title=value),
+            lambda value: sp.alert(value, silent=True),
+        ):
+            for value in ("", "   ", "\n\t", "\u200b\u202e"):
+                with self.subTest(invoke=invoke, value=repr(value)), self.assertRaisesRegex(
+                    sp.BridgeError, "must not be empty",
+                ):
+                    invoke(value)
+        run.assert_not_called()
+
+    @mock.patch.object(sp.subprocess, "run")
+    def test_alert_accepts_a_sanitized_notification_title(self, run):
+        run.return_value.returncode = 0
+        sp.alert("  --Aufgabe\n", silent=True, notification_title="  --Produktivität\t")
+        self.assertEqual(run.call_args.args[0], [
+            "notify-send", "--urgency=critical", "--icon=alarm-symbolic", "--",
+            "--Produktivität", "--Aufgabe",
+        ])
 
     @mock.patch.object(sp.shutil, "which")
     @mock.patch.object(sp.subprocess, "run")

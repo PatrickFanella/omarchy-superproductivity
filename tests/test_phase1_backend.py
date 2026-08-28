@@ -280,6 +280,23 @@ class PhaseOneBackendTests(unittest.TestCase):
         missing = StatefulAPI([task("p", subTaskIds=["missing"])])
         self.assertEqual(sp.start(missing, "p")["state"], "conflict")
 
+    def test_start_fixed_malformed_and_child_outcomes_have_semantic_keys(self):
+        cases = [
+            ([], "malformed-requested-task"),
+            ({"id": "p", "subTaskIds": "bad"}, "malformed-child-state"),
+        ]
+        for requested, expected_key in cases:
+            with self.subTest(expected_key=expected_key):
+                result = sp.start(mock.Mock(request=mock.Mock(return_value=requested)), "p")
+                self.assertEqual(result["messageKey"], expected_key)
+
+        for values, expected_key in (
+            ([task("p", subTaskIds=["missing"])], "missing-child"),
+            ([task("p", subTaskIds=["done"]), task("done", parentId="p", isDone=True)], "no-unfinished-child"),
+        ):
+            with self.subTest(expected_key=expected_key):
+                self.assertEqual(sp.start(StatefulAPI(values), "p")["messageKey"], expected_key)
+
     def test_current_parent_completion_rejects_retained_children_even_when_done(self):
         for child_values in ([], [task("c", parentId="p")], [task("c", parentId="p", isDone=True)]):
             with self.subTest(child_values=child_values):
@@ -605,6 +622,7 @@ class PhaseOneBackendTests(unittest.TestCase):
         api = StatefulAPI(values, current="first")
         result = sp.complete(api, "first", True)
         self.assertEqual((result["state"], result["autoNext"], result["nextTaskId"]), ("succeeded", "started", "second"))
+        self.assertEqual(result["messageKey"], "task-completed-and-next-started")
         sleep.assert_called_once_with(sp.AUTO_NEXT_GRACE)
 
     @mock.patch.object(sp.time, "sleep")
@@ -861,6 +879,12 @@ class PhaseOneBackendTests(unittest.TestCase):
         self.assertIn("created", api.tasks)
         self.assertFalse(any(call[0] == "POST" and call[1] == "/task-control/current" for call in api.calls))
 
+    def test_successful_add_and_switch_preserves_semantic_result(self):
+        result = sp.add(StatefulAPI([task("old")], current="old"), "Created", True)
+        self.assertEqual((result["message"], result["messageKey"]), (
+            "Task added and started", "task-added-and-started",
+        ))
+
     def test_add_and_switch_rechecks_after_created_task_read(self):
         api = StatefulAPI([task("old"), task("external")], current="old")
         original = api.request
@@ -915,10 +939,60 @@ class PhaseOneBackendTests(unittest.TestCase):
         with mock.patch.object(sp, "test_notification", return_value=({"ok": True}, 0)) as notification:
             sp.run(["test-notification", "--urgency", "normal"])
             notification.assert_called_once_with("normal")
+            notification.reset_mock()
+            sp.run([
+                "test-notification", "--body", "--Alles bereit", "--urgency", "low",
+                "--notification-title", "--Produktivität",
+            ])
+            notification.assert_called_once_with("low", "--Produktivität", "--Alles bereit")
+        with mock.patch.object(sp, "alert", return_value=({"ok": True}, 0)) as alert:
+            sp.run([
+                "alert", "--notification-title", "--Produktivität", "--urgency", "normal",
+                "--", "--Aufgabe",
+            ])
+            alert.assert_called_once_with("--Aufgabe", "normal", None, False, 100, "--Produktivität")
         with self.assertRaises(sp.BridgeError):
             sp.run(["alert", "Real title"])
         with self.assertRaises(sp.BridgeError):
             sp.validate_urgency("urgent")
+
+        invalid = [
+            ["test-notification", "--urgency", "normal", "--body"],
+            ["test-notification", "--urgency", "normal", "--body", "one", "--body", "two"],
+            ["test-notification", "--urgency", "normal", "--notification-title"],
+            ["test-notification", "--urgency", "normal", "--notification-title", "one", "--notification-title", "two"],
+            ["test-notification", "--urgency", "normal", "--notification-title", "--body", "text"],
+            ["alert", "--urgency", "normal", "--notification-title", "--", "Done"],
+            ["alert", "--urgency", "normal", "--notification-title", "one", "--notification-title", "two", "--", "Done"],
+            ["alert", "--urgency", "normal", "--notification-title", "--silent", "--", "Done"],
+            ["alert", "--urgency", "--volume", "50", "--", "Done"],
+            ["alert", "--urgency", "normal", "--volume", "--silent", "--", "Done"],
+            ["alert", "--urgency", "normal", "--sound", "--volume", "50", "--", "Done"],
+            ["test-notification", "--urgency", "normal", "--notification-title", "--silent"],
+            ["test-notification", "--urgency", "--body", "text"],
+            ["test-notification", "--urgency", "normal", "--body", "--volume"],
+        ]
+        for argv in invalid:
+            with self.subTest(argv=argv), self.assertRaises(sp.BridgeError):
+                sp.run(argv)
+
+    def test_notification_cli_rejects_explicit_empty_and_control_only_values(self):
+        invalid = [
+            ["test-notification", "--urgency", "normal", "--notification-title", value]
+            for value in ("", "\n\t", "\u200b")
+        ] + [
+            ["test-notification", "--urgency", "normal", "--body", value]
+            for value in ("", "\n\t", "\u200b")
+        ] + [
+            ["alert", "--urgency", "normal", "--notification-title", value, "--", "Done"]
+            for value in ("", "\n\t", "\u200b")
+        ] + [
+            ["alert", "--urgency", "normal", "--", value]
+            for value in ("", "\n\t", "\u200b")
+        ]
+        for argv in invalid:
+            with self.subTest(argv=argv), self.assertRaisesRegex(sp.BridgeError, "must not be empty"):
+                sp.run(argv)
 
     def test_volume_cli_defaults_and_rejects_invalid_values(self):
         with mock.patch.object(sp, "preview_sound", return_value=({"ok": True}, 0)) as preview:

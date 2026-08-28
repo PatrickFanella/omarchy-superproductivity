@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-27
+
+### Added
+
+- Added system-locale runtime translations for English, German, Spanish, French, Italian, Brazilian Portuguese, Dutch, Polish, Croatian, and Simplified Chinese, with per-key English fallback.
+- Added localized panel, bar, accessibility, status, error, and notification text while preserving user-authored task data and protocol values.
+- Added optional semantic mutation-result metadata while retaining existing English backend messages and JSON fields.
+
 ### Fixed
 
 - Hydrated Today and auto-next from done-inclusive task data so retained completed children do not appear missing.
@@ -13,6 +21,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Made non-parent row clicks selection-only so tracking begins exclusively from the explicit **Start** button.
 - Inherited a scheduled parent's start time when evaluating an unscheduled sibling for auto-next.
 - Bounded token reads, local API responses, and producer-side JSON output before Quickshell collection.
+- Used territory-aware system formats for displayed dates and times.
+- Hardened localization, action-result normalization, and project fallback maps against inherited object keys.
 
 ## [1.0.0] - 2026-08-25
 
@@ -57,5 +67,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Limited auto-next to scheduled tasks with finite start times inside a configurable ±window of 1–1440 minutes. The default is ±30 minutes; unscheduled and distant tasks are skipped.
 - Made sound previews queue volume snapshots. Panel previews use displayed volume, IPC previews use configured volume, invalid explicit values are rejected, and alerts use configured volume.
 
-[Unreleased]: https://github.com/patrickfanella/omarchy-superproductivity/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/patrickfanella/omarchy-superproductivity/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/patrickfanella/omarchy-superproductivity/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/patrickfanella/omarchy-superproductivity/releases/tag/v1.0.0
