@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased compatibility fixes
+
+- Read inline settings from the scoped bar configuration and persist settings through the plugin-owned entry API. Resolve helper paths relative to the installed QML file.
+
 All notable changes to this project are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).

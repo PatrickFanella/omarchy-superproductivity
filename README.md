@@ -393,3 +393,10 @@ The final commands prove that the committed sound and synthetic previews match t
 ## License
 
 [MIT](LICENSE)
+
+### Scoped shell settings API
+
+The service reads saved bar options through `barConfig`, and the panel saves
+through the plugin-owned `updateEntryInline` API while retaining other options.
+Older shells can continue using the registry settings writer. Helper paths are
+resolved relative to the plugin installation, including paths containing spaces.
