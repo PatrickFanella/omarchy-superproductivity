@@ -341,14 +341,32 @@ Panel {
   function persistSetting(key, value, label) {
     settingsState = ""
     settingsMessage = ""
-    if (!bar || !bar.shell || !bar.shell.pluginRegistry
-        || typeof bar.shell.pluginRegistry.setBarWidget !== "function") {
+    var api = bar ? bar.shell : null
+    if (!api || (typeof api.updateEntryInline !== "function"
+        && (!api.pluginRegistry || typeof api.pluginRegistry.setBarWidget !== "function"))) {
       settingsState = "failed"
       settingsMessage = tr("panel.settings.unavailable")
       return false
     }
     try {
-      var error = String(bar.shell.pluginRegistry.setBarWidget(moduleName, key, value, {}) || "")
+      var error = ""
+      if (typeof api.updateEntryInline === "function") {
+        // updateEntryInline replaces the entry, so retain every saved option.
+        var values = Object.assign({}, settings || {})
+        var layout = api.barConfig && api.barConfig.layout ? api.barConfig.layout : {}
+        var sections = ["left", "center", "right"]
+        for (var s = 0; s < sections.length; s++) {
+          var entries = layout[sections[s]] || []
+          for (var i = 0; i < entries.length; i++)
+            if (entries[i] && entries[i].id === moduleName) values = Object.assign({}, entries[i])
+        }
+        delete values.id
+        var unchanged = values[key] === value
+        values[key] = value
+        if (!unchanged && api.updateEntryInline(moduleName, values) === false) error = tr("panel.settings.unavailable")
+      } else {
+        error = String(api.pluginRegistry.setBarWidget(moduleName, key, value, {}) || "")
+      }
       if (error !== "") {
         settingsState = "failed"
         settingsMessage = error

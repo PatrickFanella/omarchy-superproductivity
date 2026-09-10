@@ -12,9 +12,7 @@ Item {
   property var manifest: null
 
   readonly property string pluginId: "patrickfanella.superproductivity"
-  readonly property string pluginDir: manifest && manifest.__sourceDir
-    ? String(manifest.__sourceDir)
-    : (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/" + pluginId
+  readonly property string pluginDir: decodeURIComponent(Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "")).replace(/\/$/, "")
   readonly property string helperPath: pluginDir + "/backend/superproductivity.py"
   readonly property string localeName: I18n.resolveLocale(Qt.locale().name)
 
@@ -145,7 +143,8 @@ Item {
   }
 
   function configEntry() {
-    var config = shell && shell.shellConfig ? shell.shellConfig : null
+    var config = shell && shell.barConfig ? { bar: shell.barConfig }
+      : (shell && shell.shellConfig ? shell.shellConfig : null)
     var groups = entriesIn(config)
     for (var group = 0; group < groups.length; group++) {
       for (var index = 0; index < groups[group].length; index++) {

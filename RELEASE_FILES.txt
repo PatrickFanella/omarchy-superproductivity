@@ -37,6 +37,7 @@ tests/chronological-hierarchy.json
 tests/i18n.test.js
 tests/manifest.test.js
 tests/model.test.js
+tests/scoped-shell.test.js
 tests/test_backend.py
 tests/test_phase1_backend.py
 tests/test_preview_assets.py
