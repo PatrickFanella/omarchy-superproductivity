@@ -1,5 +1,14 @@
 # Super Productivity for Omarchy
 
+<a href="https://subcult.tv">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/subcult-dark.svg">
+    <img src="docs/brand/subcult-light.svg" alt="SUBCULT" width="400">
+  </picture>
+</a>
+
+[SUBCULT](https://subcult.tv) · [Support on Patreon](https://patreon.com/subcult)
+
 Show and control the current [Super Productivity](https://super-productivity.com/) task from the Omarchy top bar.
 
 ## Features
@@ -400,3 +409,12 @@ The service reads saved bar options through `barConfig`, and the panel saves
 through the plugin-owned `updateEntryInline` API while retaining other options.
 Older shells can continue using the registry settings writer. Helper paths are
 resolved relative to the plugin installation, including paths containing spaces.
+
+## About SUBCULT and support
+
+Made by [Patrick Fanella](https://patrickfanella.co) as part of
+[SUBCULT](https://subcult.tv). Explore the tools and projects at
+**[subcult.tv](https://subcult.tv)**.
+
+If this plugin is useful to you, **[support SUBCULT on Patreon](https://patreon.com/subcult)**
+to help fund its development and the wider project.
