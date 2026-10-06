@@ -438,6 +438,7 @@ def build_hierarchy(
     projects: dict[str, str] | None = None,
     include_done: bool = False,
     hidden_child_ids: set[str] | None = None,
+    known_parent_ids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     if not isinstance(values, list):
         raise BridgeError("Super Productivity returned a malformed task list")
@@ -486,7 +487,8 @@ def build_hierarchy(
         if task["parentId"]:
             if task["parentId"] in by_id:
                 continue
-            warnings.append("missing-parent")
+            if task["parentId"] not in (known_parent_ids or set()):
+                warnings.append("missing-parent")
             task["depth"] = 1
             rendered.add(task["id"])
             if include_done or not task["isDone"]:
@@ -684,7 +686,11 @@ def status(client: Client) -> dict[str, Any]:
             _hydrate_today_children(today_payload, tasks_payload) if tasks_ok else (today_payload, set())
         )
         today_tasks, hierarchy_warnings = build_hierarchy(
-            hierarchy_payload, projects, hidden_child_ids=hidden_child_ids
+            hierarchy_payload, projects, hidden_child_ids=hidden_child_ids,
+            known_parent_ids={
+                item["id"] for item in tasks_payload
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            } if tasks_ok else None,
         )
         today_tasks = chronological_hierarchy(today_tasks)
         warnings.extend(hierarchy_warnings)
@@ -704,7 +710,7 @@ def status(client: Client) -> dict[str, Any]:
         "signedRemainingMs": signed,
         "remainingMs": max(0, signed or 0),
         "overtimeMs": max(0, -(signed or 0)),
-        "context": {"todayOk": today_ok, "projectsOk": projects_ok, "tasksOk": tasks_ok, "warnings": warnings},
+        "context": {"todayOk": today_ok, "projectsOk": projects_ok, "tasksOk": tasks_ok, "warnings": list(dict.fromkeys(warnings))},
     }
 
 

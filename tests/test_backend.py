@@ -304,6 +304,24 @@ class BackendTests(unittest.TestCase):
         self.assertIn("missing-child", result["context"]["warnings"])
         self.assertTrue(result["context"]["tasksOk"])
 
+    def test_status_parent_outside_today_is_not_reported_missing(self):
+        child = {"id": "child", "title": "Child", "timeEstimate": 10,
+                 "timeSpent": 0, "parentId": "parent"}
+        parent = {"id": "parent", "title": "Parent", "timeEstimate": 10,
+                  "timeSpent": 0, "subTaskIds": ["child"]}
+        result = sp.status(FakeClient([[child], [], [parent, child], None]))
+        self.assertNotIn("missing-parent", result["context"]["warnings"])
+        self.assertEqual([task["id"] for task in result["todayTasks"]], ["child"])
+        self.assertEqual(result["todayTasks"][0]["parentId"], "parent")
+
+    def test_status_reports_missing_parents_once(self):
+        children = [{"id": task_id, "title": task_id, "timeEstimate": 10,
+                     "timeSpent": 0, "parentId": "missing"}
+                    for task_id in ["first", "second"]]
+        result = sp.status(FakeClient([children, [], children, None]))
+        self.assertEqual(result["context"]["warnings"], ["missing-parent"])
+        self.assertEqual([task["id"] for task in result["todayTasks"]], ["first", "second"])
+
     def test_status_done_retained_child_is_hidden_without_missing_warning(self):
         parent = {"id": "parent", "title": "Parent", "timeEstimate": 10, "timeSpent": 0,
                   "subTaskIds": ["done"]}
