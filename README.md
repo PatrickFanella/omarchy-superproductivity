@@ -98,11 +98,23 @@ The top-right gear opens the in-plugin configuration view. The adjacent controls
 
 ### Quick Add controls
 
-Middle-click the bar widget or run `omarchy-shell patrickfanella.superproductivity quickAdd` to open the compact Quick Add modal. The modal opens in the center of the screen with a wider input and extra vertical space. It focuses the task input immediately and uses the same shorthand and **Add & switch** setting as the inline field. Enter or the plus button submits. A successful add closes the modal; failures and partial results remain visible. Escape or an outside click dismisses it and preserves an unsubmitted draft. Left-click still opens the full panel.
+Middle-click the bar widget to open the Quick Add modal, or run:
 
-Quick Add appears above Today. Its compact, borderless **Add & switch** checkbox sits beside the syntax hint. It persists as `quickAddSwitch` and defaults to off. Both Enter in the field and the square **+** button obey it. When checked, either action creates the task and then tries one switch. When unchecked, either action only creates the task. Keyboard focus uses a tinted background and underline.
+```bash
+omarchy-shell patrickfanella.superproductivity quickAdd
+```
 
-The panel shows the exact hint `+project, @schedule, #tag`.
+The modal opens in the center of the screen with a wide, tall input. The header identifies Quick Add and Super Productivity. Below the input, the syntax hint sits on the left and the **Add & switch** checkbox and **Add** button sit on the right. The input receives keyboard focus immediately. See the [Quick Add guide](docs/quick-add.md) for setup, result handling, and troubleshooting.
+
+| Control | Result |
+| --- | --- |
+| <kbd>Enter</kbd> in the input | Submits using the **Add & switch** setting. |
+| **Add** or **Add & switch** button | Submits using the same setting. |
+| <kbd>Escape</kbd> or an outside click | Dismisses the modal and preserves an unsubmitted draft. |
+| Successful add | Clears the input and closes the modal. |
+| Failed, partial, conflict, or unknown result | Keeps the modal open and displays the result. |
+
+The full panel keeps its inline Quick Add field above Today, with a square **+** button. Both inputs share the same draft and the same persisted `quickAddSwitch` setting, which defaults to off. With **Add & switch** enabled, submission creates the task and then attempts one switch. With it disabled, submission only creates the task. A partial result with a created task ID clears the input to avoid adding the same task twice.
 
 Quick Add supports these forms:
 
@@ -293,6 +305,8 @@ previewSound()
 action(requestId)
 ```
 
+`quickAdd()` opens the modal and focuses its input; it does not create a task. Use `add(shorthand, startAfter)` to create a task directly without opening a popup. `open()` opens the full panel, and `close()` dismisses either view.
+
 IPC arguments arrive as strings. `add` accepts `startAfter` as `true`, `false`, `1`, or `0`. An empty value uses the persisted `quickAddSwitch` setting, which defaults to off. `complete(id)` performs current-task completion and uses the configured `autoStartNext` value. `completeTask(id)` performs targeted list completion and never runs auto-next.
 
 Mutating commands return `{"accepted":true,"requestId":"<service-start-ms>-<counter>"}` or `{"accepted":false,"error":"<code>"}`. Acceptance means queued, not applied. Poll `action(requestId)` until `queueState` is `finished`:
@@ -395,7 +409,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_backend.py tests/test_p
 node --test tests/*.test.js
 PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile backend/superproductivity.py
 omarchy plugin validate .
-qmllint -I /usr/share/omarchy/shell BarWidget.qml Panel.qml Service.qml
+qmllint -I /usr/share/omarchy/shell BarWidget.qml Panel.qml Service.qml TaskPopup.qml
 python3 scripts/generate_default_sound.py
 git diff --exit-code -- assets/timer-complete.wav
 python3 scripts/generate_preview_assets.py
