@@ -53,9 +53,19 @@ BarWidget {
 
   function tr(key, args) { return I18n.translate(localeName, key, args || {}) }
 
-  function open() { if (panelLoader.item) panelLoader.item.open() }
+  function open() {
+    if (!panelLoader.item) return
+    if (engine && engine.quickAddRequested) { quickAdd(); return }
+    panelLoader.item.quickAddOnly = false
+    panelLoader.item.open()
+  }
+  function quickAdd() { if (panelLoader.item) panelLoader.item.quickAdd() }
   function close() { if (panelLoader.item) panelLoader.item.close() }
-  function toggle() { if (panelLoader.item) panelLoader.item.toggle() }
+  function toggle() {
+    if (!panelLoader.item) return
+    panelLoader.item.quickAddOnly = false
+    panelLoader.item.toggle()
+  }
   function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
 
   function injectPanel() {
@@ -119,7 +129,7 @@ BarWidget {
     Accessible.onPressAction: root.toggle()
 
     onPressed: function(code) {
-      if (code === Qt.MiddleButton) { if (root.engine) root.engine.refresh() }
+      if (code === Qt.MiddleButton) root.quickAdd()
       else if (code === Qt.RightButton) { if (root.engine) root.engine.show() }
       else root.toggle()
     }

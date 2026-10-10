@@ -82,7 +82,7 @@ Press <kbd>Escape</kbd> to close the panel.
 | Control | Result |
 | --- | --- |
 | Left-click | Open or close the panel |
-| Middle-click | Refresh status |
+| Middle-click | Open the Quick Add modal |
 | Right-click | Focus or open Super Productivity |
 
 ### Current-task controls
@@ -97,6 +97,8 @@ All mutation controls are disabled while another mutation is queued or running.
 The top-right gear opens the in-plugin configuration view. The adjacent controls refresh status and open Super Productivity.
 
 ### Quick Add controls
+
+Middle-click the bar widget or run `omarchy-shell patrickfanella.superproductivity quickAdd` to open the compact Quick Add modal. The modal opens in the center of the screen with a wider input and extra vertical space. It focuses the task input immediately and uses the same shorthand and **Add & switch** setting as the inline field. Enter or the plus button submits. A successful add closes the modal; failures and partial results remain visible. Escape or an outside click dismisses it and preserves an unsubmitted draft. Left-click still opens the full panel.
 
 Quick Add appears above Today. Its compact, borderless **Add & switch** checkbox sits beside the syntax hint. It persists as `quickAddSwitch` and defaults to off. Both Enter in the field and the square **+** button obey it. When checked, either action creates the task and then tries one switch. When unchecked, either action only creates the task. Keyboard focus uses a tinted background and underline.
 
@@ -167,20 +169,22 @@ Text fields keep their typing and editing shortcuts. Today row movement, <kbd>C<
 
 ## Optional global hotkey
 
-The plugin never edits your bindings. To add a global hotkey, first run `hyprctl binds` and choose an unused combination. `SUPER + SHIFT + U` is a current unused example:
+The plugin never edits your bindings automatically. To open the Quick Add modal from any application, check `hyprctl binds` for conflicts, then add this line to `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + SHIFT + U", "Super Productivity", "omarchy-shell shell toggle patrickfanella.superproductivity '{}'")
+o.bind("SUPER + SHIFT + U", "Super Productivity Quick Add", "omarchy-shell patrickfanella.superproductivity quickAdd")
 ```
 
-Add the line manually to `~/.config/hypr/bindings.lua`, then apply and check the configuration:
+To bind the full panel instead, use `omarchy-shell shell toggle patrickfanella.superproductivity '{}'` as the command. Choose an unused combination for each binding. If you replace an existing binding, call `hl.unbind` for that combination first.
+
+Apply and check the configuration:
 
 ```bash
 hyprctl reload
 hyprctl configerrors
 ```
 
-`SUPER + SHIFT + T` is commonly, and currently, used for Super Productivity Quick Add, so this plugin does not select it. To uninstall the hotkey, remove the `o.bind` line and run the two validation commands again.
+To uninstall the hotkey, remove its `o.bind` line and run the two validation commands again.
 
 ## Test alerts
 
@@ -272,6 +276,7 @@ The target is `patrickfanella.superproductivity`. Use the Omarchy shell IPC form
 
 ```text
 open()
+quickAdd()
 close()
 toggle()
 refresh()

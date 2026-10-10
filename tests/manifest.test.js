@@ -139,5 +139,5 @@ test("panel keeps user and protocol content outside translation", () => {
   assert.match(panelSource, /resultState === "failed"/)
   assert.match(panelSource, /elide: Text\.ElideRight/)
   assert.match(panelSource, /fittedContentWidth\(Style\.space\(420\)\)/)
-  assert.match(panelSource, /fittedContentHeight\(content\.implicitHeight, Style\.space\(620\)\)/)
+  assert.match(panelSource, /fittedContentHeight\([\s\S]*?content\.implicitHeight,[\s\S]*?Style\.space\(620\)\)/)
 })

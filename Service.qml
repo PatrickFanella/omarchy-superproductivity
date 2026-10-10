@@ -51,6 +51,17 @@ Item {
   readonly property string mutationTaskId: currentAction ? String(currentAction.taskId || "") : ""
   readonly property string switchingTaskId: mutationKind === "start" ? mutationTaskId : ""
 
+  property bool quickAddRequested: false
+
+  function quickAdd() {
+    quickAddRequested = true
+    try {
+      return summon("summon")
+    } finally {
+      quickAddRequested = false
+    }
+  }
+
   property bool showBusy: false
   property string showMessage: ""
   property var showReply: null
@@ -698,6 +709,7 @@ Item {
   IpcHandler {
     target: "patrickfanella.superproductivity"
     function open(): string { return root.summon("summon") }
+    function quickAdd(): string { return root.quickAdd() }
     function close(): string { return root.summon("hide") }
     function toggle(): string { return root.summon("toggle") }
     function refresh(): string { root.refresh(); return "ok" }

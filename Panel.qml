@@ -14,6 +14,8 @@ Panel {
   property var hostWidget: null
   property var engine: null
 
+  property bool quickAddOnly: false
+  property bool addCloseOnSuccess: false
   property bool initialFocusChosen: false
   property bool settingsView: false
   property bool todayCollapsed: false
@@ -490,6 +492,18 @@ Panel {
     todayMessage = tr("panel.task.completeSubtasksFirst")
   }
 
+  function quickAdd() {
+    quickAddOnly = true
+    settingsView = false
+    scroller.contentY = 0
+    if (addRequestId === "") {
+      addState = ""
+      addMessage = ""
+    }
+    root.open()
+    Qt.callLater(function() { if (root.opened) addField.forceActiveFocus() })
+  }
+
   function submitAdd(startAfter) {
     if (!engine || mutationBusy) return
     var value = String(addField.text || "").trim()
@@ -506,6 +520,7 @@ Panel {
       return
     }
     addRequestId = String(request.requestId || "")
+    addCloseOnSuccess = quickAddOnly
     rememberAddMode(addRequestId, startAfter)
     addState = "running"
     addMessage = startAfter ? tr("panel.add.creatingThenSwitching") : tr("panel.add.creating")
@@ -843,6 +858,11 @@ Panel {
 
   function focusInitial() {
     if (!opened) return
+    if (quickAddOnly) {
+      addField.forceActiveFocus()
+      initialFocusChosen = true
+      return
+    }
     if (initialFocusChosen
         && !(keyCatcher.activeFocus && focusedTaskId === "" && !todayCollapsed && todayRepeater.count > 0)) return
     if (!todayCollapsed && todayRepeater.count > 0) {
@@ -950,6 +970,8 @@ Panel {
         if (root.addMessage === "") root.addMessage = submittedStartAfter ? root.tr("panel.add.createdAndSwitched") : root.tr("panel.add.created")
         root.forgetAddMode(id)
         if (root.addState === "succeeded" || (result && result.createdTaskId)) addField.clear()
+        if (root.addCloseOnSuccess && root.quickAddOnly && root.addState === "succeeded") root.close()
+        root.addCloseOnSuccess = false
         return
       }
       if (id === root.mutationRequestId) {
@@ -976,15 +998,21 @@ Panel {
     function onRefreshingChanged() { }
   }
 
-  KeyboardPanel {
+  TaskPopup {
     id: popup
+    centerOnScreen: root.quickAddOnly
+    padding: root.quickAddOnly ? Style.space(28) : Style.spacing.popupPadding
     anchorItem: root.anchorItem
     owner: root.hostWidget || root
     bar: root.bar
     open: root.opened
-    focusTarget: keyCatcher
-    contentWidth: popup.fittedContentWidth(Style.space(420))
-    contentHeight: popup.fittedContentHeight(content.implicitHeight, Style.space(620))
+    focusTarget: root.quickAddOnly ? addField : keyCatcher
+    contentWidth: root.quickAddOnly
+      ? popup.fittedContentWidth(Style.space(840))
+      : popup.fittedContentWidth(Style.space(420))
+    contentHeight: popup.fittedContentHeight(
+      root.quickAddOnly ? Math.max(content.implicitHeight, Style.space(180)) : content.implicitHeight,
+      Style.space(620))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -1226,6 +1254,10 @@ Panel {
             width: parent.width
             spacing: Style.space(12)
 
+          Column {
+            visible: !root.quickAddOnly
+            width: parent.width
+            spacing: Style.space(12)
           PanelHero {
             width: parent.width
             title: root.task ? root.titleFor(root.task) : (root.hasNextScheduled ? root.nextScheduledTitle : root.tr("app.name"))
@@ -1455,23 +1487,49 @@ Panel {
 
           PanelSeparator { width: parent.width; foreground: root.foreground }
 
+          }
+
           Column {
             width: parent.width
-            spacing: Style.space(7)
+            spacing: root.quickAddOnly ? Style.space(18) : Style.space(7)
 
             SectionToggle {
               id: quickAddSectionToggle
+              visible: !root.quickAddOnly
               text: root.tr("panel.quickAdd.title")
-              collapsed: root.quickAddCollapsed
+              collapsed: !root.quickAddOnly && root.quickAddCollapsed
               countText: ""
               accessibleText: root.quickAddCollapsed ? root.tr("panel.quickAdd.expand") : root.tr("panel.quickAdd.collapse")
-              onTriggered: root.quickAddCollapsed = !root.quickAddCollapsed
+              onTriggered: if (!root.quickAddOnly) root.quickAddCollapsed = !root.quickAddCollapsed
+            }
+
+            Row {
+              visible: root.quickAddOnly
+              width: parent.width
+              spacing: Style.space(16)
+              Text {
+                width: parent.width - modalAppName.implicitWidth - parent.spacing
+                text: root.tr("panel.quickAdd.title")
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body + Style.space(5)
+                font.bold: true
+                Accessible.name: text
+              }
+              Text {
+                id: modalAppName
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.tr("app.name")
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
             }
 
             Column {
-              visible: !root.quickAddCollapsed
+              visible: root.quickAddOnly || !root.quickAddCollapsed
               width: parent.width
-              spacing: Style.space(7)
+              spacing: root.quickAddOnly ? Style.space(18) : Style.space(7)
 
               Row {
                 id: quickAddRow
@@ -1480,7 +1538,11 @@ Panel {
 
                 TextField {
                   id: addField
-                  width: parent.width - addOnlyButton.width - parent.spacing
+                  width: root.quickAddOnly ? parent.width : parent.width - addOnlyButton.width - parent.spacing
+                  height: root.quickAddOnly ? Style.space(68) : implicitHeight
+                  horizontalPadding: root.quickAddOnly ? Style.space(18) : Style.spacing.controlPaddingX
+                  verticalAlignment: TextInput.AlignVCenter
+                  font.pixelSize: root.quickAddOnly ? Style.font.body + Style.space(2) : Style.font.body
                   enabled: !root.mutationBusy
                   foreground: root.foreground
                   accent: root.accent
@@ -1502,6 +1564,7 @@ Panel {
 
                 Button {
                   id: addOnlyButton
+                  visible: !root.quickAddOnly
                   width: addField.implicitHeight
                   height: width
                   text: root.addRequestId !== "" && !root.addModeFor(root.addRequestId) ? "…" : "+"
@@ -1523,7 +1586,7 @@ Panel {
                 spacing: Style.space(8)
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
-                  width: Math.max(0, parent.width - quickAddSwitchControl.width - parent.spacing)
+                  width: Math.max(0, parent.width - quickAddSwitchControl.width - (root.quickAddOnly ? modalAddButton.width + parent.spacing * 2 : parent.spacing))
                   text: "+project, @schedule, #tag"
                   textFormat: Text.PlainText
                   color: root.dim
@@ -1596,11 +1659,33 @@ Panel {
                     color: root.accent
                   }
                 }
+                Button {
+                  id: modalAddButton
+                  visible: root.quickAddOnly
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Math.max(Style.space(130), implicitWidth)
+                  height: Style.space(44)
+                  text: root.addRequestId !== "" ? "…" : (root.quickAddSwitchValue ? root.tr("panel.quickAdd.switch") : root.kindDisplay("add"))
+                  bordered: true
+                  selected: true
+                  enabled: !root.mutationBusy
+                  foreground: root.accent
+                  fontFamily: root.fontFamily
+                  focusable: true
+                  Accessible.name: root.quickAddSwitchValue ? root.tr("panel.quickAdd.addAndSwitch") : root.tr("panel.quickAdd.add")
+                  Accessible.role: Accessible.Button
+                  onClicked: root.submitAdd(root.quickAddSwitchValue)
+                  Accessible.onPressAction: root.submitAdd(root.quickAddSwitchValue)
+                }
               }
               ResultFeedback { visible: root.addState !== ""; resultState: root.addState; message: root.addMessage }
             }
           }
 
+          Column {
+            visible: !root.quickAddOnly
+            width: parent.width
+            spacing: Style.space(12)
           PanelSeparator { width: parent.width; foreground: root.foreground }
 
           Column {
@@ -1809,6 +1894,7 @@ Panel {
 
               ResultFeedback { visible: root.todayState !== ""; resultState: root.todayState; message: root.todayMessage }
             }
+          }
           }
 
           }
