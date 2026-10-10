@@ -12,6 +12,7 @@ README.md
 RELEASE_FILES.txt
 SECURITY.md
 Service.qml
+TaskPopup.qml
 assets/demo.gif
 assets/preview-src/frame-01.svg
 assets/preview-src/frame-02.svg
