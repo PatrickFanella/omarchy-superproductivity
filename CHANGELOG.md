@@ -10,6 +10,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Centered Quick Add modal with a wide, tall task input, a syntax hint, and an aligned Add & switch checkbox and submit button.
+- `quickAdd()` IPC command and instructions for an optional Super + Shift + U hotkey.
+- Plugin-owned `TaskPopup.qml`, adapted from Omarchy's keyboard popup, with explicit screen centering and existing focus and dismissal behavior.
+
+### Changed
+
+- Middle-click opens Quick Add instead of refreshing status. Refresh remains available in the full panel and through IPC.
+- Modal submission uses the existing task queue and shorthand parser. Successful adds close the modal; other result states remain visible. Dismissal preserves an unsubmitted draft.
+
 ## [1.1.1] - 2026-08-28
 
 ### Changed
