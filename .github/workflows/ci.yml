@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -11,13 +12,14 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container: archlinux:base-20260823.0.578598
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Pin Arch Linux Archive
         run: printf 'Server = https://archive.archlinux.org/repos/2026/08/24/$repo/os/$arch\n' > /etc/pacman.d/mirrorlist
       - name: Install test tools
         run: pacman -Syu --noconfirm git imagemagick jq librsvg nodejs python quickshell qt5-declarative qt6-declarative ttf-jetbrains-mono
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Verify release files
         run: python3 scripts/verify_release_files.py
       - name: Test backend suites
