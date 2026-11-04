@@ -28,6 +28,9 @@ assets/screenshots/panel.png
 assets/timer-complete.wav
 backend/superproductivity.py
 docs/brand/README.md
+docs/brand/lockup.svg
+docs/brand/mark-mono-light.svg
+docs/brand/mark.svg
 docs/brand/subcult-dark.svg
 docs/brand/subcult-light.svg
 docs/quick-add.md

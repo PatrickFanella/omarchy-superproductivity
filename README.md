@@ -1,11 +1,9 @@
 # Super Productivity for Omarchy
 
-<a href="https://subcult.tv">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/subcult-dark.svg">
-    <img src="docs/brand/subcult-light.svg" alt="SUBCULT" width="400">
-  </picture>
-</a>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup.svg">
+  <img src="docs/brand/mark-mono-light.svg" alt="Super Productivity for Omarchy logo. A timer ring: a thin circle with a thick three-quarter progress arc, and a short horizontal bar beneath it." height="80">
+</picture>
 
 [SUBCULT](https://subcult.tv) · [Support on Patreon](https://patreon.com/subcult)
 
@@ -430,6 +428,13 @@ Older shells can continue using the registry settings writer. Helper paths are
 resolved relative to the plugin installation, including paths containing spaces.
 
 ## About SUBCULT and support
+
+<a href="https://subcult.tv">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/subcult-dark.svg">
+    <img src="docs/brand/subcult-light.svg" alt="SUBCULT" width="240">
+  </picture>
+</a>
 
 Made by [Patrick Fanella](https://patrickfanella.co) as part of
 [SUBCULT](https://subcult.tv). Explore the tools and projects at
