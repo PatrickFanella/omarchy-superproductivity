@@ -1,4 +1,6 @@
+.github/workflows/auto-merge.yml
 .github/workflows/ci.yml
+.github/workflows/pr-ci.yml
 .gitignore
 ActionModel.js
 BarWidget.qml
