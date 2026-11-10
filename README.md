@@ -7,22 +7,9 @@
 
 [SUBCULT](https://subcult.tv) · [Support on Patreon](https://patreon.com/subcult)
 
-Show and control the current [Super Productivity](https://super-productivity.com/) task from the Omarchy top bar.
+An [Omarchy](https://github.com/basecamp/omarchy) shell plugin that shows the current [Super Productivity](https://super-productivity.com/) task in the top bar and lets you stop, complete, extend and add tasks without opening the app. It is for people who run Omarchy and keep their tasks in the Super Productivity desktop app.
 
-## Features
-
-- Shows the current task with a local second-by-second countdown and signed overtime.
-- Shows the next scheduled task and local start time in the idle bar and panel.
-- Stops, completes, and extends the current task with explicit controls.
-- Lists incomplete Today tasks as chronological parent blocks. Scheduled blocks sort by ascending start time, unscheduled blocks follow, each parent's child order is authoritative, and orphaned children become top-level rows.
-- Gives runnable Today leaves explicit **Start** and **Complete** controls. Parents never show **Complete**.
-- Completes tasks from Today without opening Super Productivity.
-- Adds a task without switching, or adds it and switches once, through one compact persistent inline checkbox.
-- Alerts once when a countdown expires or a scheduled task reaches its start time, whether idle or tracking.
-- Tests notifications and previews alert sounds. Panel previews use the displayed volume; IPC previews use the configured volume.
-- Localizes the bar, panel, accessibility text, errors, statuses, and notifications from the system locale, with per-key English fallback.
-- Opens or focuses the Super Productivity desktop app.
-- Keeps one polling and mutation service across all monitors.
+The plugin talks to the desktop app's local REST API on your own machine. Version 1.1.1 is the latest tagged release; the centered Quick Add modal is on `main` and not yet in a tagged release. The app's API has no transactions, so a race between the bar and the app is still possible and recovery is best effort (see [Mutation results and race limits](#mutation-results-and-race-limits)).
 
 ## Preview
 
@@ -34,7 +21,31 @@ The screenshot above is a cropped live capture. The generated preview below demo
 
 The animated preview uses synthetic task and project names. The static [reduced-motion preview](assets/screenshots/panel-reduced-motion.png) shows the synthetic idle next-start state.
 
-## Requirements
+## Features
+
+- Shows the current task with a local second-by-second countdown and signed overtime.
+- Shows the next scheduled task and local start time in the idle bar and panel.
+- Stops, completes, and extends the current task with explicit controls.
+- Lists incomplete Today tasks as chronological parent blocks. Scheduled blocks sort by ascending start time, unscheduled blocks follow, each parent's child order is authoritative, and orphaned children become top-level rows.
+- Gives runnable Today leaves explicit **Start** and **Complete** controls. Parents never show **Complete**.
+- Completes tasks from Today without opening Super Productivity.
+- Adds a task without switching, or adds it and switches once, through one compact persistent inline checkbox.
+- Opens a centered Quick Add modal from a middle-click, an IPC command or an optional hotkey.
+- Alerts once when a countdown expires or a scheduled task reaches its start time, whether idle or tracking.
+- Tests notifications and previews alert sounds. Panel previews use the displayed volume; IPC previews use the configured volume.
+- Localizes the bar, panel, accessibility text, errors, statuses, and notifications from the system locale, with per-key English fallback.
+- Opens or focuses the Super Productivity desktop app.
+- Keeps one polling and mutation service across all monitors.
+
+### Languages
+
+The plugin follows the system locale. It supports English, German, Spanish, French, Italian, Brazilian Portuguese, Dutch, Polish, Croatian, and Simplified Chinese. Missing translations fall back to English per key.
+
+The plugin localizes its interface, accessibility text, statuses, errors, and notifications. Task titles, project names, tags, Quick Add syntax, settings keys, and IPC or CLI values remain unchanged.
+
+## Quick start
+
+### Requirements
 
 - Omarchy with the shell plugin system.
 - Super Productivity desktop app with its local REST API enabled.
@@ -43,20 +54,14 @@ The animated preview uses synthetic task and project names. The static [reduced-
 
 The open action tries `hyprctl`, `gtk-launch`, and `xdg-open`, in that order.
 
-## Localization
-
-The plugin follows the system locale. It supports English, German, Spanish, French, Italian, Brazilian Portuguese, Dutch, Polish, Croatian, and Simplified Chinese. Missing translations fall back to English per key.
-
-The plugin localizes its interface, accessibility text, statuses, errors, and notifications. Task titles, project names, tags, Quick Add syntax, settings keys, and IPC or CLI values remain unchanged.
-
-## Install
+### Install
 
 Enable the local REST API in **Super Productivity → Settings → Misc**. Super Productivity creates the token file when you enable the API.
 
 Install and enable the plugin:
 
 ```bash
-omarchy plugin add https://github.com/patrickfanella/omarchy-superproductivity.git --enable
+omarchy plugin add https://github.com/subculture-collective/omarchy-superproductivity.git --enable
 ```
 
 If the widget does not appear, refresh plugin discovery:
@@ -64,6 +69,14 @@ If the widget does not appear, refresh plugin discovery:
 ```bash
 omarchy-shell shell rescanPlugins
 ```
+
+### Remove
+
+```bash
+omarchy plugin remove patrickfanella.superproductivity
+```
+
+Removal deletes only the plugin checkout. It does not change Super Productivity data, settings, or tokens.
 
 ## Use the panel
 
@@ -214,7 +227,9 @@ While idle, the bar shows `Next HH:mm · <title>` for the next scheduled Today t
 
 Scheduled-start alerts use each fresh Today sample. When scheduled tasks cross their start time, the service records every crossing and alerts for the earliest one that is not already current. It also suppresses a scheduled parent when Super Productivity reports one of its children as current. Tracking any unrelated task does not suppress the alert. If several tasks cross together, a current task does not prevent the earliest unrelated crossing from alerting. On first startup, the service records the current schedule without alerting for old start times. Recovery after an interrupted or failed refresh is best effort. **Task alerts**, **Play alert sound**, **Alert volume**, **Alert sound path**, and **Notification urgency** are shared by countdown-expiry and scheduled-start alerts.
 
-## Configure the widget
+## Configuration
+
+### Widget settings
 
 Select the top-right gear in the popup to open the **Super Productivity** configuration view. The plugin renders this view in its popup instead of using the Omarchy Shell Settings panel. Setting changes persist through the plugin registry and shell configuration.
 
@@ -235,6 +250,44 @@ Select the top-right gear in the popup to open the **Super Productivity** config
 Auto-next scans the next sibling first, then the remaining flattened Today order. A child without its own start time inherits its immediate parent's valid scheduled time for this eligibility check. It skips tasks that remain unscheduled, tasks with invalid start times, scheduled tasks outside the configured ±window, done tasks, every parent with retained `subTaskIds`, and the completed task. The default window is 30 minutes. It never wraps to the start.
 
 After completion, the helper allows the current task to be null or the completed task's exact captured parent during the 300 ms grace period. It rechecks immediately before its single follow-up POST. An unrelated current task always wins and is never changed. If Super Productivity promotes the exact parent and no eligible auto-next candidate remains, the helper rechecks the parent and sends one untargeted Stop to undo that promotion, even when auto-next is disabled. Because Stop cannot name its target, another client can still switch tasks after the last read but before Stop is applied; this residual race cannot be eliminated by the local API.
+
+### Environment overrides
+
+| Variable | Purpose |
+| --- | --- |
+| `SUPERPRODUCTIVITY_API_URL` | Preferred local API URL override. |
+| `SUPER_PRODUCTIVITY_REST_URL` | API URL alias. |
+| `SP_LOCAL_REST_URL` | API URL alias. |
+| `SUPER_PRODUCTIVITY_URL` | API URL alias. |
+| `SUPER_PRODUCTIVITY_TOKEN_FILE` | Path to a private, user-owned token file. |
+| `SP_LOCAL_REST_TOKEN` | Direct token override. Takes precedence over token files. |
+| `SUPER_PRODUCTIVITY_TOKEN` | Direct token alias. |
+| `SUPER_PRODUCTIVITY_APP_URL` | URI for the final `xdg-open` fallback. |
+
+API URLs must use `http` or `https`, have no credentials, query, or fragment, and use exactly `localhost`, `127.0.0.1`, or `::1`. The default is `http://127.0.0.1:3876`.
+
+The helper checks these token paths in order:
+
+```text
+~/.config/superProductivity/local-rest-api-token
+~/.var/app/com.super_productivity.SuperProductivity/config/superProductivity/local-rest-api-token
+~/snap/superproductivity/common/.config/superProductivity/local-rest-api-token
+~/snap/superproductivity/current/.config/superProductivity/local-rest-api-token
+```
+
+If you use `--user-data-dir` or another custom location, set `SUPER_PRODUCTIVITY_TOKEN_FILE` in the environment that starts `omarchy-shell`. Prefer a token file because environment variables can be visible to child processes and diagnostics.
+
+### Sound limits
+
+Custom sounds must meet all of these conditions:
+
+- The resolved path is under your home directory or `/usr/share/sounds`.
+- The path is a readable regular file no larger than 20 MiB.
+- The suffix is `.wav`, `.ogg`, `.oga`, `.flac`, or `.mp3`.
+
+The bundled `assets/timer-complete.wav` is also accepted. Playback tries `pw-play`, `paplay`, and `canberra-gtk-play`, in that order. The `canberra-gtk-play` fallback receives its volume as a decibel value. Real alert playback has a 60-second timeout.
+
+A preview stops after three seconds. The helper starts the player in a new process group. On cancellation it sends SIGTERM, waits 200 ms, then sends SIGKILL and reaps the process. A real alert clears queued previews, cancels an active preview, and waits at most 500 ms for its exit before forcing cleanup and continuing.
 
 ## Mutation results and race limits
 
@@ -319,44 +372,6 @@ An unknown or expired ID returns `{"found":false}`. The queue holds 16 pending r
 
 `refresh`, `show`, `testNotification`, and `previewSound` do not use the mutation queue. Notification tests reject concurrent tests. IPC `previewSound()` snapshots the configured volume. Panel previews snapshot the displayed volume when queued. Each preview keeps that value even if configuration changes before playback. Invalid explicit preview volumes are rejected. Alerts always read the configured volume when launched. Sound preview uses a separate FIFO lane.
 
-## Environment overrides
-
-| Variable | Purpose |
-| --- | --- |
-| `SUPERPRODUCTIVITY_API_URL` | Preferred local API URL override. |
-| `SUPER_PRODUCTIVITY_REST_URL` | API URL alias. |
-| `SP_LOCAL_REST_URL` | API URL alias. |
-| `SUPER_PRODUCTIVITY_URL` | API URL alias. |
-| `SUPER_PRODUCTIVITY_TOKEN_FILE` | Path to a private, user-owned token file. |
-| `SP_LOCAL_REST_TOKEN` | Direct token override. Takes precedence over token files. |
-| `SUPER_PRODUCTIVITY_TOKEN` | Direct token alias. |
-| `SUPER_PRODUCTIVITY_APP_URL` | URI for the final `xdg-open` fallback. |
-
-API URLs must use `http` or `https`, have no credentials, query, or fragment, and use exactly `localhost`, `127.0.0.1`, or `::1`. The default is `http://127.0.0.1:3876`.
-
-The helper checks these token paths in order:
-
-```text
-~/.config/superProductivity/local-rest-api-token
-~/.var/app/com.super_productivity.SuperProductivity/config/superProductivity/local-rest-api-token
-~/snap/superproductivity/common/.config/superProductivity/local-rest-api-token
-~/snap/superproductivity/current/.config/superProductivity/local-rest-api-token
-```
-
-If you use `--user-data-dir` or another custom location, set `SUPER_PRODUCTIVITY_TOKEN_FILE` in the environment that starts `omarchy-shell`. Prefer a token file because environment variables can be visible to child processes and diagnostics.
-
-## Sound limits
-
-Custom sounds must meet all of these conditions:
-
-- The resolved path is under your home directory or `/usr/share/sounds`.
-- The path is a readable regular file no larger than 20 MiB.
-- The suffix is `.wav`, `.ogg`, `.oga`, `.flac`, or `.mp3`.
-
-The bundled `assets/timer-complete.wav` is also accepted. Playback tries `pw-play`, `paplay`, and `canberra-gtk-play`, in that order. The `canberra-gtk-play` fallback receives its volume as a decibel value. Real alert playback has a 60-second timeout.
-
-A preview stops after three seconds. The helper starts the player in a new process group. On cancellation it sends SIGTERM, waits 200 ms, then sends SIGKILL and reaps the process. A real alert clears queued previews, cancels an active preview, and waits at most 500 ms for its exit before forcing cleanup and continuing.
-
 ## Security and privacy
 
 Omarchy plugins run unsandboxed inside `omarchy-shell`. This plugin starts its bundled Python helper, sends authenticated requests to the configured loopback address, and starts local desktop commands for notifications, sound, and app focus.
@@ -389,13 +404,24 @@ omarchy-shell patrickfanella.superproductivity status
 
 If the helper reports a connection error, open Super Productivity and confirm that the local REST API is enabled.
 
-## Remove
+## Release package
 
-```bash
-omarchy plugin remove patrickfanella.superproductivity
-```
+Omarchy installs the plugin straight from its Git repository, so there is no build step. Tagged releases (`v1.0.0`, `v1.1.0`, `v1.1.1`) mark the published versions; [CHANGELOG.md](CHANGELOG.md) lists what changed in each. [RELEASE_FILES.txt](RELEASE_FILES.txt) lists every file that belongs in the package, and `scripts/verify_release_files.py` fails if the tree and the list disagree. Add new runtime files to that list.
 
-Removal deletes only the plugin checkout. It does not change Super Productivity data, settings, or tokens.
+## Project layout
+
+| Path | Contents |
+| --- | --- |
+| `manifest.json` | Plugin ID, entry points, bar widget defaults and settings schema. |
+| `Service.qml` | Shared service: polling, the mutation queue, alerts and IPC. One instance serves every monitor. |
+| `BarWidget.qml`, `Panel.qml`, `TaskPopup.qml` | Bar widget, popup panel and the centered Quick Add modal. |
+| `Model.js`, `ActionModel.js`, `I18n.js` | Today hierarchy, action rules and translations. |
+| `backend/superproductivity.py` | Python helper that calls the local REST API, plays sounds and sends notifications. |
+| `assets/` | Bundled alert sound, screenshots and the generated preview. |
+| `scripts/` | Generators for the default sound and preview, and the release file check. |
+| `tests/` | Python and Node test suites. |
+
+The service reads saved bar options through `barConfig`, and the panel saves through the plugin-owned `updateEntryInline` API while keeping other options. Older shells can keep using the registry settings writer. Helper paths resolve relative to the plugin installation, including paths that contain spaces.
 
 ## Develop
 
@@ -416,29 +442,10 @@ git diff --exit-code -- assets/demo.gif assets/preview-src assets/screenshots
 
 The final commands prove that the committed sound and synthetic previews match their generators.
 
+## Contributing
+
+Report bugs and request features in [GitHub issues](https://github.com/subculture-collective/omarchy-superproductivity/issues). Send code as pull requests on GitHub against `main`. CI runs the release file check, the Python and Node tests, plugin validation, QML lint against Omarchy, and the sound and preview regeneration checks on every pull request. [CONTRIBUTING.md](CONTRIBUTING.md) covers what to include in a change and how to test mutation and Quick Add changes. Report security problems as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
-[MIT](LICENSE)
-
-### Scoped shell settings API
-
-The service reads saved bar options through `barConfig`, and the panel saves
-through the plugin-owned `updateEntryInline` API while retaining other options.
-Older shells can continue using the registry settings writer. Helper paths are
-resolved relative to the plugin installation, including paths containing spaces.
-
-## About SUBCULT and support
-
-<a href="https://subcult.tv">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/subcult-dark.svg">
-    <img src="docs/brand/subcult-light.svg" alt="SUBCULT" width="240">
-  </picture>
-</a>
-
-Made by [Patrick Fanella](https://patrickfanella.co) as part of
-[SUBCULT](https://subcult.tv). Explore the tools and projects at
-**[subcult.tv](https://subcult.tv)**.
-
-If this plugin is useful to you, **[support SUBCULT on Patreon](https://patreon.com/subcult)**
-to help fund its development and the wider project.
+[MIT](LICENSE). Copyright (c) 2026 Patrick Fanella. Made as part of [SUBCULT](https://subcult.tv).
